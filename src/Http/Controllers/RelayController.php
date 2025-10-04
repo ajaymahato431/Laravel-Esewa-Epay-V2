@@ -10,8 +10,9 @@ class RelayController extends Controller
     public function __invoke(Request $request)
     {
         [$payload, $redirect] = $this->extractPayloadAndRedirect($request);
+        $transaction = $request->route('transaction');
 
-        if (!$payload) {
+        if (!$payload && !$transaction) {
             return response()->view('esewa::callback-status', [
                 'meta' => [
                     'ok'      => false,
@@ -25,10 +26,11 @@ class RelayController extends Controller
         }
 
         return response()->view('esewa::relay', [
-            'data'     => $payload,
-            'redirect' => $redirect,
-            'method'   => 'POST',
-            'action'   => route('esewa.callback'),
+            'data'             => $payload,
+            'redirect'         => $redirect,
+            'transactionUuid'  => $transaction,
+            'method'           => 'POST',
+            'action'           => route('esewa.callback'),
         ]);
     }
 

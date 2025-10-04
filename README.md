@@ -291,7 +291,7 @@ public function reconcile(string $uuid)
 
 ## Local development (localhost callbacks)
 
-The `/esewa/callback` route now only accepts POST requests. Configure eSewa to send its success and failure redirects to `/esewa/relay` (no query string required). When you call `Esewa::pay()` you can still provide `success_url` and `failure_url`; the package stores those values in the `esewa_payments.meta` column and uses them for the final redirect after the signature is verified.
+The `/esewa/callback` route now only accepts POST requests. Configure eSewa to send its success and failure redirects to `/esewa/relay` (the package appends the transaction UUID for each checkout automatically). When you call `Esewa::pay()` you can still provide `success_url` and `failure_url`; the package stores those values in the `esewa_payments.meta` column and uses them for the final redirect after the signature is verified.
 
 The relay page accepts both GET and POST callbacks from eSewa, then auto-posts the signed `data` payload back to `/esewa/callback`, and the callback responds with either a redirect to the stored URL or the built-in status view. If someone opens the relay URL without the `data` string the request fails with HTTP 422, so a guessed UUID can no longer mark a payment as complete. For manual testing, copy the `data=...` string from the eSewa redirect into the relay URL or use the helper from the test suite to craft a signed payload.
 

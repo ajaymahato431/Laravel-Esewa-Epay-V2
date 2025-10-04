@@ -44,7 +44,12 @@
         <p>Please wait a moment. You will be redirected automatically.</p>
         <form id="esewa-relay" method="{{ $method ?? 'POST' }}" action="{{ $action }}">
             @csrf
-            <input type="hidden" name="data" value="{{ $data }}">
+            @if(!empty($data))
+                <input type="hidden" name="data" value="{{ $data }}">
+            @endif
+            @if(!empty($transactionUuid))
+                <input type="hidden" name="transaction_uuid" value="{{ $transactionUuid }}">
+            @endif
             @if($redirect ?? false)
                 <input type="hidden" name="redirect" value="{{ $redirect }}">
             @endif

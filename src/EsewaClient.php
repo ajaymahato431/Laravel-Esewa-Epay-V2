@@ -63,7 +63,7 @@ class EsewaClient
             ?? ($this->config['failure_url'] ?? null)
         );
 
-        $relayUrl = $this->relayUrl();
+        $relayUrl = $this->relayUrl($params['transaction_uuid'] ?? null);
 
         $payload = [
             'amount'                  => $params['amount'],
@@ -99,12 +99,17 @@ class EsewaClient
         return url($value);
     }
 
-    public function relayUrl(): string
+    public function relayUrl(?string $transactionUuid = null): string
     {
         try {
-            return route('esewa.relay');
+            return route('esewa.relay', ['transaction' => $transactionUuid]);
         } catch (\Throwable $e) {
-            return url('/esewa/relay');
+            $path = '/esewa/relay';
+            if ($transactionUuid) {
+                $path .= '/' . $transactionUuid;
+            }
+
+            return url($path);
         }
     }
 

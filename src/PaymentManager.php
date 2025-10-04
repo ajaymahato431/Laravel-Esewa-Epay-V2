@@ -38,7 +38,7 @@ class PaymentManager
             'meta'             => $meta,
         ]);
 
-        $relay = $this->client->relayUrl();
+        $relay = $this->client->relayUrl($uuid);
 
         $payload = $this->client->buildFormPayload([
             'amount' => $amount,

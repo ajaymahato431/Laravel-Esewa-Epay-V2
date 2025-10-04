@@ -4,6 +4,7 @@ use AjayMahato\Esewa\Enums\PaymentStatus;
 use AjayMahato\Esewa\Events\EsewaPaymentVerified;
 use AjayMahato\Esewa\Models\EsewaPayment;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
 
 it('reconciles a pending payment via posted callback', function () {
     $uuid = '240101-000001-TEST';
@@ -123,6 +124,41 @@ it('redirects to the stored failure URL when the callback status is not complete
     expect($payment->verified_at)->toBeNull();
 });
 
+it('reconciles via status check when the callback only receives the transaction uuid', function () {
+    $uuid = '240101-STATUS-TEST';
+
+    $payment = EsewaPayment::create([
+        'transaction_uuid' => $uuid,
+        'product_code'     => config('esewa.product_code', 'EPAYTEST'),
+        'amount'           => 900,
+        'tax_amount'       => 0,
+        'service_charge'   => 0,
+        'delivery_charge'  => 0,
+        'total_amount'     => 900,
+        'status'           => PaymentStatus::PENDING,
+        'meta'             => ['success_redirect' => '/orders/auto-complete'],
+    ]);
+
+    Event::fake();
+    Http::fakeSequence()->push([
+        'status' => 'COMPLETE',
+        'transaction_code' => 'STATUS123',
+    ], 200);
+
+    $response = $this->post('/esewa/callback', [
+        'transaction_uuid' => $uuid,
+    ]);
+
+    $response->assertRedirect('/orders/auto-complete');
+
+    $payment->refresh();
+    expect($payment->status)->toBe(PaymentStatus::COMPLETE);
+    expect($payment->ref_id)->toBe('STATUS123');
+    expect($payment->verified_at)->not()->toBeNull();
+
+    Event::assertDispatched(EsewaPaymentVerified::class, fn ($event) => $event->payment->transaction_uuid === $uuid);
+});
+
 it('returns JSON when the callback is posted via API client', function () {
     $uuid = '240101-000004-TEST';
 
@@ -157,12 +193,13 @@ it('renders the relay page which auto posts to the callback route', function () 
         'transaction_uuid' => 'RELAY-TEST-UUID',
     ]);
 
-    $response = $this->get("/esewa/relay?data={$base64}");
+    $response = $this->get("/esewa/relay/RELAY-TEST-UUID?data={$base64}");
 
     $response->assertOk()
         ->assertSee('id="esewa-relay"', false)
         ->assertSee('action="' . route('esewa.callback') . '"', false)
-        ->assertSee('name="data"', false);
+        ->assertSee('name="data"', false)
+        ->assertSee('name="transaction_uuid"', false);
 });
 
 it('parses relay URLs where eSewa appends ?data after an existing redirect query parameter', function () {
@@ -170,29 +207,34 @@ it('parses relay URLs where eSewa appends ?data after an existing redirect query
         'transaction_uuid' => 'RELAY-QUERY-UUID',
     ]);
 
-    $response = $this->get("/esewa/relay?redirect=/orders/complete?data={$base64}");
+    $response = $this->get("/esewa/relay/RELAY-QUERY-UUID?redirect=/orders/complete?data={$base64}");
 
     $response->assertOk()
         ->assertSee('value="/orders/complete"', false)
-        ->assertSee("value=\"{$base64}\"", false);
+        ->assertSee("value=\"{$base64}\"", false)
+        ->assertSee('name="transaction_uuid"', false);
 });
 it('accepts relay payload via POST', function () {
     $base64 = esewaCallbackPayload([
         'transaction_uuid' => 'RELAY-POST-UUID',
     ]);
 
-    $response = $this->post('/esewa/relay', ['data' => $base64]);
+    $response = $this->post('/esewa/relay/RELAY-POST-UUID', ['data' => $base64]);
 
     $response->assertOk()
         ->assertSee('id="esewa-relay"', false)
-        ->assertSee("value=\"{$base64}\"", false);
+        ->assertSee("value=\"{$base64}\"", false)
+        ->assertSee('name="transaction_uuid"', false);
 });
 
 
-it('shows a friendly message when the relay payload is missing', function () {
-    $response = $this->get('/esewa/relay?redirect=/orders/complete');
+it('renders the relay auto-submit form when only the transaction id is present', function () {
+    $response = $this->get('/esewa/relay/RELAY-MISSING-UUID?redirect=/orders/complete');
 
-    $response->assertStatus(422)->assertSee('has not sent the signed payload yet');
+    $response->assertOk()
+        ->assertSee('id="esewa-relay"', false)
+        ->assertSee('name="transaction_uuid"', false)
+        ->assertDontSee('name="data"', false);
 });
 
 function esewaCallbackPayload(array $overrides): string
