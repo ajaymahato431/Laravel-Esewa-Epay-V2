@@ -9,5 +9,5 @@ Route::group([
     'middleware' => config('esewa.middleware', ['web']),
 ], function () {
     Route::post('/esewa/pay', [StartController::class, 'start'])->name('esewa.pay');
-    Route::post('/esewa/callback', [CallbackController::class, 'handle'])->name('esewa.callback');
+    Route::match(['GET', 'POST'], '/esewa/callback', [CallbackController::class, 'handle'])->name('esewa.callback');
 });

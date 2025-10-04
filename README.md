@@ -40,6 +40,17 @@ Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, p
    ESEWA_ROUTE_PREFIX=             # set if you want /prefix/esewa/...
    ```
 
+## Add this to your order/booking table
+
+```php
+$table->foreignId('payment_id')->nullable()
+->constrained('esewa_payments')->nullOnDelete();
+$table->string('transaction_uuid')->unique();
+$table->string('payment_status')->default('UNPAID'); // cache
+$table->string('esewa_ref')->nullable(); // external proof
+$table->timestamp('paid_at')->nullable();
+```
+
 ## Quick Start
 
 Create your order/booking as usual. In your controller, generate the UUID, queue the delayed reconciliation job, then return the payment form using the same UUID.
@@ -109,6 +120,7 @@ public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event): vo
     }
 
     $model->update([
+        'payment_id' =? $payment->id,
         'payment_status' => 'PAID',
         'esewa_ref' => $payment->ref_id,
         'paid_at' => now(),
@@ -276,6 +288,12 @@ public function reconcile(string $uuid)
 ```
 
 **Recommended setup:** dispatch the delayed job for every payment, keep the scheduled sweep as a backstop, and expose the manual action for support/admin tooling.
+
+## Local development (localhost callbacks)
+
+The `/esewa/callback` route now accepts both `POST` (the server-to-server webhook) and `GET` requests. When eSewa redirects a browser back to your app (or when you manually open the URL in local testing) the package will call eSewa's status API, update the `esewa_payments` row, fire `EsewaPaymentVerified` once the status flips to `COMPLETE`, and then either show a lightweight confirmation screen or redirect wherever you ask.
+
+On localhost you can simply open `http://127.0.0.1:8000/esewa/callback?transaction_uuid={uuid}` after eSewa returns you to the browser. The package reconciles the payment in the background and renders the status page, so you no longer need ngrok just to finish the workflow. In staging/production you should still keep the webhook URL registered with eSewa so their POST callback can reach your app instantly; the GET fallback exists for development tunnels and manual support reconciliations.
 
 ## Security Notes
 

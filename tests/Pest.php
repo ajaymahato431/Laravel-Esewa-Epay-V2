@@ -1,3 +1,5 @@
 ﻿<?php
 
-uses(Orchestra\Testbench\TestCase::class)->in('Unit', 'Feature');
+use AjayMahato\Esewa\Tests\TestCase;
+
+uses(TestCase::class)->in('Unit', 'Feature');
