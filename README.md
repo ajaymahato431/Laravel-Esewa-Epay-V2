@@ -1,177 +1,155 @@
-﻿# Laravel eSewa (by Ajay Mahato)
+﻿# Laravel eSewa
 
-Laravel integration for **eSewa ePay v2**:
-- One-liner from your controller: `return Esewa::pay([...]);`
-- Signature (HMAC-SHA256 Base64) generation
-- Success callback verification using `signed_field_names`
-- Status Check helper
-- DB table `esewa_payments` included
+Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, post to the ePay form endpoint, verify callbacks, and record every attempt in your database with a single facade call.
 
-## Install
+## Features
 
-```bash
-composer require ajaymahato/laravel-esewa
-php artisan vendor:publish --tag=esewa-config
-php artisan migrate
-```
+- Drop-in facade: `return Esewa::pay([...]);` renders an auto-submit payment form
+- HMAC-SHA256 (Base64) signing helper for requests and webhook payloads
+- Callback verification + event dispatch (`EsewaPaymentVerified`) with DB persistence
+- Status check client for reconciliation workflows
+- Ships with migration, model, enum, controllers, routes, and Blade view
 
+## Requirements
 
-.env:
+- PHP 8.1+
+- Laravel 10 or 11 (or any app with `illuminate/support` 10/11)
+- eSewa merchant credentials for UAT or Production
 
-```
-ESEWA_MODE=uat
-ESEWA_PRODUCT_CODE=EPAYTEST
-ESEWA_SECRET_KEY=8gBm/:&EnhH.1/q
+## Installation
 
-# optional
-ESEWA_SUCCESS_URL=https://your-app.com/esewa/success
-ESEWA_FAILURE_URL=https://your-app.com/esewa/failure
-ESEWA_ROUTE_PREFIX=
-```
+1. Require the package
+   ```bash
+   composer require ajaymahato/laravel-esewa
+   ```
+2. Publish config + migration, then run migrations
+   ```bash
+   php artisan vendor:publish --tag=esewa-config
+   php artisan migrate
+   ```
+3. Configure your `.env`
 
-Usage (Controller one-liner)
+   ```dotenv
+   ESEWA_MODE=uat                 # uat (sandbox) or production
+   ESEWA_PRODUCT_CODE=EPAYTEST     # merchant code
+   ESEWA_SECRET_KEY=8gBm/:&EnhH.1/q
 
-Create your order/booking first. Then:
+   # Optional overrides
+   ESEWA_SUCCESS_URL=https://your-app.com/esewa/success
+   ESEWA_FAILURE_URL=https://your-app.com/esewa/failure
+   ESEWA_ROUTE_PREFIX=             # set if you want /prefix/esewa/...
+   ```
 
-```
-return \Esewa::pay([
-  'amount' => (int) $order->total,
-  'tax_amount' => 0,
-  'product_service_charge' => 0,
-  'product_delivery_charge' => 0,
-  'total_amount' => (int) $order->total,
-  'meta' => [
-    'payable' => ['type' => $order::class, 'id' => $order->id],
-  ],
-  // optional overrides:
-  // 'success_url' => route('thank.you'),
-  // 'failure_url' => route('payment.failed'),
-]);
-```
+## Quick Start
 
+1. Create your order/booking as usual.
+2. From your controller, return the payment form:
+   ```php
+   return \Esewa::pay([
+       'amount' => (int) $order->total,
+       'total_amount' => (int) $order->total,
+       'tax_amount' => 0,
+       'product_service_charge' => 0,
+       'product_delivery_charge' => 0,
+       'meta' => [
+           'payable' => ['type' => $order::class, 'id' => $order->id],
+       ],
+       // optional route overrides
+       // 'success_url' => route('thank.you'),
+       // 'failure_url' => route('payment.failed'),
+   ]);
+   ```
+3. The response is an HTML page with a self-submitting form that posts to the proper eSewa endpoint.
 
-The package’s routes:
+## Package Routes
 
-```
-POST /esewa/pay (internal use by the package’s start controller)
-
-POST /esewa/callback (eSewa calls this; package verifies and updates DB)
-```
-
-After success, package dispatches:
-
-```
-AjayMahato\Esewa\Events\EsewaPaymentVerified
-```
-
-
-Register a listener to mark your order/booking/cart as paid:
+The service provider registers two POST routes (middleware + prefix pulled from config):
 
 ```
-public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event)
+POST /esewa/pay       -> StartController@start (internal helper)
+POST /esewa/callback  -> CallbackController@handle (eSewa webhook)
+```
+
+## Handling Verified Payments
+
+`CallbackController` verifies the Base64 payload, stores the response, updates status, and fires `AjayMahato\Esewa\Events\EsewaPaymentVerified`.
+
+Example listener:
+
+```php
+public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event): void
 {
-  $payment = $event->payment;
-  if (($payment->status?->value ?? $payment->status) !== 'COMPLETE') return;
+    $payment = $event->payment;
+    if (($payment->status?->value ?? $payment->status) !== 'COMPLETE') {
+        return;
+    }
 
-  $p = $payment->meta['payable'] ?? null;
-  if (!$p) return;
+    $meta = $payment->meta['payable'] ?? null;
+    if (! $meta) {
+        return;
+    }
 
-  $model = app($p['type'])::find($p['id']);
-  if (!$model) return;
+    $model = app($meta['type'])::find($meta['id']);
+    if (! $model) {
+        return;
+    }
 
-  $model->update([
-    'payment_status' => 'PAID',
-    'esewa_ref'      => $payment->ref_id,
-    'paid_at'        => now(),
-  ]);
-}
-```
-
-Status Check (fallback)
-```
-$payment = \AjayMahato\Esewa\Models\EsewaPayment::where('transaction_uuid', $uuid)->firstOrFail();
-
-$resp = \Esewa::statusCheck(
-  $payment->product_code,
-  (string) $payment->total_amount,
-  $payment->transaction_uuid
-);
-// Optionally sync DB + dispatch the same event if COMPLETE.
-```
-
-Security
-
-Request signature order: total_amount,transaction_uuid,product_code
-
-Response: rebuild signature using provided signed_field_names
-
-Keep secret key in .env, never commit it.
-
-Production
-```
-ESEWA_MODE=production
-ESEWA_PRODUCT_CODE=YOUR_REAL_CODE
-ESEWA_SECRET_KEY=YOUR_REAL_SECRET
-```
-
-
-MIT License.
-
-
----
-
-# 14) Local test in a fresh Laravel app
-
-1) In your Laravel app `composer.json`, add path repo to test locally:
-
-```json
-"repositories": [
-  { "type": "path", "url": "../laravel-esewa" }
-]
-```
-
-
-Require it:
-
-```
-composer require ajaymahato/laravel-esewa:* --prefer-source
-php artisan vendor:publish --tag=esewa-config
-php artisan migrate
-```
-
-
-Add .env keys (UAT by default).
-
-In your controller:
-
-```
-public function payOrder(\App\Models\Order $order)
-{
-    return \Esewa::pay([
-        'amount' => (int) $order->total,
-        'total_amount' => (int) $order->total,
-        'meta' => ['payable' => ['type' => $order::class, 'id' => $order->id]],
+    $model->update([
+        'payment_status' => 'PAID',
+        'esewa_ref' => $payment->ref_id,
+        'paid_at' => now(),
     ]);
 }
 ```
 
+## Status Check Workflow
 
-Register a listener for EsewaPaymentVerified and update the order.
+Use the client if you need to reconcile manually or recover from missed callbacks:
 
-15) Ship it
+```php
+$payment = \AjayMahato\Esewa\Models\EsewaPayment::where('transaction_uuid', $uuid)->firstOrFail();
+
+$response = \Esewa::statusCheck(
+    $payment->product_code,
+    (string) $payment->total_amount,
+    $payment->transaction_uuid,
+);
+
+// Optionally persist $response and re-fire EsewaPaymentVerified when status turns COMPLETE.
 ```
-git init
-git add .
-git commit -m "feat: initial release of ajaymahato/laravel-esewa"
-git branch -M main
-git remote add origin git@github.com:ajaymahato431/laravel-esewa.git
-git push -u origin main
 
-git tag v0.1.0
-git push --tags
-```
+## Security Notes
 
+- Request signature order: `total_amount,transaction_uuid,product_code`
+- Validate every callback with `signed_field_names` + signature comparison (handled for you)
+- Never commit your secret key; keep it in `.env`
 
-Go to Packagist.org → Submit → paste GitHub URL.
+## Local Package Development
 
-Enable Packagist auto-hooks (or GitHub Packagist integration) so new tags sync.
+Want to test this package inside another Laravel app before publishing?
+
+1. In the consuming app `composer.json` add the path repository:
+   ```json
+   "repositories": [
+     { "type": "path", "url": "../laravel-esewa" }
+   ]
+   ```
+2. Require the package from the path source:
+   ```bash
+   composer require ajaymahato/laravel-esewa:* --prefer-source
+   php artisan vendor:publish --tag=esewa-config
+   php artisan migrate
+   ```
+3. Set the same `.env` keys and call `\Esewa::pay([...])` from your controller.
+
+## Production Launch Checklist
+
+- Switch `ESEWA_MODE=production` and provide live product code + secret key
+- Confirm your callback URL is publicly reachable over HTTPS (matching the value configured with eSewa)
+- Register listeners for `EsewaPaymentVerified` to sync order status
+- Tag a release: `git tag v0.1.0 && git push --tags`
+- Submit the repository to Packagist or enable auto-sync webhooks
+
+## License
+
+Released under the MIT License.
