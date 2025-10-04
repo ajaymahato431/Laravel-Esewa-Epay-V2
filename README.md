@@ -1,4 +1,4 @@
-﻿# Laravel eSewa
+﻿# Laravel eSewa ePay v2
 
 Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, post to the ePay form endpoint, verify callbacks, and record every attempt in your database with a single facade call.
 
@@ -30,7 +30,7 @@ Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, p
 3. Configure your `.env`
 
    ```dotenv
-   ESEWA_MODE=uat                 # uat (sandbox) or production
+   ESEWA_MODE=uat                 # uat (testing) or production
    ESEWA_PRODUCT_CODE=EPAYTEST     # merchant code
    ESEWA_SECRET_KEY=8gBm/:&EnhH.1/q
 
@@ -76,20 +76,19 @@ public function payOrder(\App\Models\Order $order)
 
 The response is an HTML page with a self-submitting form that posts to the correct eSewa endpoint.
 
-## Package Routes
-
-The service provider registers two POST routes (middleware + prefix pulled from config):
-
-```
-POST /esewa/pay       -> StartController@start (internal helper)
-POST /esewa/callback  -> CallbackController@handle (eSewa webhook)
-```
-
 ## Handling Verified Payments
 
-`CallbackController` verifies the Base64 payload, stores the response, updates status, and fires `AjayMahato\Esewa\Events\EsewaPaymentVerified`.
+When eSewa redirects back, the package verifies the Base64 payload, stores the response in esewa_payments, updates status/ref_id/verified_at, and fires `AjayMahato\Esewa\Events\EsewaPaymentVerified`.
 
-Example listener:
+Hook one listener to flip your own record (booking/order/cart) to PAID.
+
+1. Make the listener
+
+```php
+php artisan make:listener SetPayablePaid
+```
+
+app/Listeners/SetPayablePaid.php
 
 ```php
 public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event): void
@@ -114,6 +113,15 @@ public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event): vo
         'esewa_ref' => $payment->ref_id,
         'paid_at' => now(),
     ]);
+}
+```
+
+Tip: add a tiny helper on your models:
+
+```php
+public function isPaid(): bool
+{
+return $this->payment_status === 'PAID';
 }
 ```
 
@@ -269,45 +277,11 @@ public function reconcile(string $uuid)
 
 **Recommended setup:** dispatch the delayed job for every payment, keep the scheduled sweep as a backstop, and expose the manual action for support/admin tooling.
 
-## Status Check Workflow
-
-If you need to run a status check manually, re-use the model and facade helpers:
-
-```php
-$payment = \AjayMahato\Esewa\Models\EsewaPayment::where('transaction_uuid', $uuid)->firstOrFail();
-
-$response = \Esewa::statusCheck(
-    $payment->product_code,
-    (string) $payment->total_amount,
-    $payment->transaction_uuid,
-);
-
-// Optionally persist $response and re-fire EsewaPaymentVerified when status turns COMPLETE.
-```
-
 ## Security Notes
 
 - Request signature order: `total_amount,transaction_uuid,product_code`
 - Validate every callback with `signed_field_names` + signature comparison (handled for you)
 - Never commit your secret key; keep it in `.env`
-
-## Local Package Development
-
-Want to test this package inside another Laravel app before publishing?
-
-1. In the consuming app `composer.json` add the path repository:
-   ```json
-   "repositories": [
-     { "type": "path", "url": "../laravel-esewa" }
-   ]
-   ```
-2. Require the package from the path source:
-   ```bash
-   composer require ajaymahato/laravel-esewa:* --prefer-source
-   php artisan vendor:publish --tag=esewa-config
-   php artisan migrate
-   ```
-3. Set the same `.env` keys and call `\Esewa::pay([...])` from your controller.
 
 ## Production Launch Checklist
 
