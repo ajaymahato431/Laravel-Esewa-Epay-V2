@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "ajaymahato/laravel-esewa",
   "description": "Laravel eSewa ePay v2 integration (HMAC, callback verify, status check)",
   "type": "library",
