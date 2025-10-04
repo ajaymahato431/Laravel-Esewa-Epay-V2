@@ -20,7 +20,7 @@ Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, p
 
 1. Require the package
    ```bash
-   composer require ajaymahato/laravel-esewa
+   composer require ajaymahato/laravel-esewa-epay-v2
    ```
 2. Publish config + migration, then run migrations
    ```bash
