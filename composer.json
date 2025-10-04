@@ -36,5 +36,7 @@
   "scripts": {
     "test": "pest",
     "format": "pint"
-  }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
 }
