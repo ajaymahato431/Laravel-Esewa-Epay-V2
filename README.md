@@ -283,14 +283,6 @@ public function reconcile(string $uuid)
 - Validate every callback with `signed_field_names` + signature comparison (handled for you)
 - Never commit your secret key; keep it in `.env`
 
-## Production Launch Checklist
-
-- Switch `ESEWA_MODE=production` and provide live product code + secret key
-- Confirm your callback URL is publicly reachable over HTTPS (matching the value configured with eSewa)
-- Register listeners for `EsewaPaymentVerified` to sync order status
-- Tag a release: `git tag v0.1.0 && git push --tags`
-- Submit the repository to Packagist or enable auto-sync webhooks
-
 ## License
 
 Released under the MIT License.
