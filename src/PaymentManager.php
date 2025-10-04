@@ -23,6 +23,10 @@ class PaymentManager
         $total  = (int)($params['total_amount'] ?? ($amount + $tax + $svc + $del));
         $uuid   = (string)($params['transaction_uuid'] ?? now()->format('ymd-His').'-'.Str::upper(Str::random(4)));
 
+        $meta = $params['meta'] ?? [];
+        $meta['success_redirect'] = $params['success_url'] ?? ($meta['success_redirect'] ?? ($this->config['success_url'] ?? null));
+        $meta['failure_redirect'] = $params['failure_url'] ?? ($meta['failure_redirect'] ?? ($this->config['failure_url'] ?? null));
+
         $payment = EsewaPayment::create([
             'transaction_uuid' => $uuid,
             'product_code'     => $this->config['product_code'],
@@ -31,8 +35,10 @@ class PaymentManager
             'service_charge'   => $svc,
             'delivery_charge'  => $del,
             'total_amount'     => $total,
-            'meta'             => $params['meta'] ?? null, // order pointers etc.
+            'meta'             => $meta,
         ]);
+
+        $relay = $this->client->relayUrl();
 
         $payload = $this->client->buildFormPayload([
             'amount' => $amount,
@@ -41,8 +47,9 @@ class PaymentManager
             'product_delivery_charge' => $del,
             'total_amount' => $total,
             'transaction_uuid' => $uuid,
-            'success_url' => $params['success_url'] ?? null,
-            'failure_url' => $params['failure_url'] ?? null,
+        ], [
+            'success_url' => $relay,
+            'failure_url' => $relay,
         ]);
 
         $html = view('esewa::form', [

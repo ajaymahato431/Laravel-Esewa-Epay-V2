@@ -9,7 +9,7 @@ class RelayController extends Controller
 {
     public function __invoke(Request $request)
     {
-        $payload = $request->query('data');
+        [$payload, $redirect] = $this->extractPayloadAndRedirect($request);
 
         if (!$payload) {
             abort(422, 'Missing data query parameter.');
@@ -17,16 +17,23 @@ class RelayController extends Controller
 
         return response()->view('esewa::relay', [
             'data'     => $payload,
-            'redirect' => $this->resolveRedirect($request),
+            'redirect' => $redirect,
             'method'   => 'POST',
             'action'   => route('esewa.callback'),
         ]);
     }
 
-    protected function resolveRedirect(Request $request): ?string
+    protected function extractPayloadAndRedirect(Request $request): array
     {
+        $payload  = $request->query('data');
         $redirect = $request->query('redirect');
 
-        return $redirect ?: null;
+        if (!$payload && $redirect && str_contains($redirect, '?data=')) {
+            [$cleanRedirect, $fromRedirect] = explode('?data=', $redirect, 2);
+            $redirect = $cleanRedirect ?: null;
+            $payload  = $fromRedirect ?: null;
+        }
+
+        return [$payload ?: null, $redirect ?: null];
     }
 }

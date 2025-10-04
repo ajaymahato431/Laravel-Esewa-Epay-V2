@@ -17,6 +17,7 @@ it('reconciles a pending payment via posted callback', function () {
         'delivery_charge'  => 0,
         'total_amount'     => 1000,
         'status'           => PaymentStatus::PENDING,
+        'meta'             => ['success_redirect' => '/orders/complete'],
     ]);
 
     Event::fake();
@@ -30,7 +31,13 @@ it('reconciles a pending payment via posted callback', function () {
 
     $response = $this->post('/esewa/callback', ['data' => $base64]);
 
-    $response->assertStatus(200)->assertSee('Payment Complete')->assertSee('Payment verified successfully.');
+    $response->assertRedirect('/orders/complete');
+
+    $payload = session('esewa');
+
+    expect($payload)->not()->toBeNull()
+        ->and($payload['meta']['ok'])->toBeTrue()
+        ->and($payload['meta']['status'])->toBe('COMPLETE');
 
     $payment->refresh();
     expect($payment->status)->toBe(PaymentStatus::COMPLETE);
@@ -79,7 +86,7 @@ it('redirects back with session payload when redirect input is provided', functi
         ->and($payload['meta']['ok'])->toBeTrue();
 });
 
-it('shows pending messaging when the callback status is not complete', function () {
+it('redirects to the stored failure URL when the callback status is not complete', function () {
     $uuid = '240101-000003-TEST';
 
     EsewaPayment::create([
@@ -91,6 +98,7 @@ it('shows pending messaging when the callback status is not complete', function 
         'delivery_charge'  => 0,
         'total_amount'     => 1200,
         'status'           => PaymentStatus::PENDING,
+        'meta'             => ['failure_redirect' => '/orders/pending'],
     ]);
 
     $base64 = esewaCallbackPayload([
@@ -102,7 +110,12 @@ it('shows pending messaging when the callback status is not complete', function 
 
     $response = $this->post('/esewa/callback', ['data' => $base64]);
 
-    $response->assertStatus(202)->assertSee('Payment Pending')->assertSee('still processing');
+    $response->assertRedirect('/orders/pending');
+
+    $payload = session('esewa');
+
+    expect($payload)->not()->toBeNull()
+        ->and($payload['meta']['ok'])->toBeFalse();
 
     $payment = EsewaPayment::firstWhere('transaction_uuid', $uuid);
 
@@ -144,12 +157,24 @@ it('renders the relay page which auto posts to the callback route', function () 
         'transaction_uuid' => 'RELAY-TEST-UUID',
     ]);
 
-    $response = $this->get("/esewa/relay?data={$base64}&redirect=/orders/relay");
+    $response = $this->get("/esewa/relay?data={$base64}");
 
     $response->assertOk()
         ->assertSee('id="esewa-relay"', false)
         ->assertSee('action="' . route('esewa.callback') . '"', false)
-        ->assertSee('value="/orders/relay"', false);
+        ->assertSee('name="data"', false);
+});
+
+it('parses relay URLs where eSewa appends ?data after an existing redirect query parameter', function () {
+    $base64 = esewaCallbackPayload([
+        'transaction_uuid' => 'RELAY-QUERY-UUID',
+    ]);
+
+    $response = $this->get("/esewa/relay?redirect=/orders/complete?data={$base64}");
+
+    $response->assertOk()
+        ->assertSee('value="/orders/complete"', false)
+        ->assertSee("value=\"{$base64}\"", false);
 });
 
 function esewaCallbackPayload(array $overrides): string

@@ -186,7 +186,7 @@ class CallbackController extends Controller
 
     protected function renderBrowserResponse(Request $request, array $meta, ?EsewaPayment $payment, ?array $raw, int $status)
     {
-        $redirect = $this->resolveRedirectUrl($request);
+        $redirect = $this->resolveRedirectUrl($request, $payment, (bool)($meta['ok'] ?? false));
 
         $payload = [
             'meta'        => $meta,
@@ -203,10 +203,25 @@ class CallbackController extends Controller
         return response()->view('esewa::callback-status', $payload, $status);
     }
 
-    protected function resolveRedirectUrl(Request $request): ?string
+    protected function resolveRedirectUrl(Request $request, ?EsewaPayment $payment, bool $ok): ?string
     {
         $redirect = $request->input('redirect', $request->query('redirect'));
 
-        return $redirect ?: null;
+        if ($redirect) {
+            return $redirect;
+        }
+
+        if ($payment && is_array($payment->meta)) {
+            $key = $ok ? 'success_redirect' : 'failure_redirect';
+            $stored = $payment->meta[$key] ?? null;
+            if ($stored) {
+                return $stored;
+            }
+        }
+
+        $configKey = $ok ? 'success_url' : 'failure_url';
+        $configValue = config("esewa.{$configKey}");
+
+        return $configValue ?: null;
     }
 }

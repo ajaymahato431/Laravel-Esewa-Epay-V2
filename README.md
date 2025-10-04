@@ -291,9 +291,9 @@ public function reconcile(string $uuid)
 
 ## Local development (localhost callbacks)
 
-The `/esewa/callback` route now only accepts POST requests. Point your eSewa success and failure URLs at the package-provided `/esewa/relay` endpoint (e.g. `https://your-app.test/esewa/relay?redirect=/orders/complete`). The relay page renders instantly in the browser, posts the signed `data` payload back to `/esewa/callback`, and then redirects the shopper to the URL supplied via the optional `redirect` parameter.
+The `/esewa/callback` route now only accepts POST requests. Configure eSewa to send its success and failure redirects to `/esewa/relay` (no query string required). When you call `Esewa::pay()` you can still provide `success_url` and `failure_url`; the package stores those values in the `esewa_payments.meta` column and uses them for the final redirect after the signature is verified.
 
-Because the callback is posted with the Base64 payload and signature straight from eSewa, the package verifies the HMAC before touching your `esewa_payments` table. If someone opens the relay URL without the `data` string the request fails with HTTP 422, so a guessed UUID can no longer mark a payment as complete. For manual testing, copy the `data=...` string from the eSewa redirect into the relay URL or use the helper from the test suite to craft a signed payload.
+The relay page renders instantly in the browser, auto-posts the signed `data` payload back to `/esewa/callback`, and the callback responds with either a redirect to the stored URL or the built-in status view. If someone opens the relay URL without the `data` string the request fails with HTTP 422, so a guessed UUID can no longer mark a payment as complete. For manual testing, copy the `data=...` string from the eSewa redirect into the relay URL or use the helper from the test suite to craft a signed payload.
 
 ## Security Notes
 
