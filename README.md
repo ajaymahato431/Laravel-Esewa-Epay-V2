@@ -42,24 +42,39 @@ Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, p
 
 ## Quick Start
 
-1. Create your order/booking as usual.
-2. From your controller, return the payment form:
-   ```php
-   return \Esewa::pay([
-       'amount' => (int) $order->total,
-       'total_amount' => (int) $order->total,
-       'tax_amount' => 0,
-       'product_service_charge' => 0,
-       'product_delivery_charge' => 0,
-       'meta' => [
-           'payable' => ['type' => $order::class, 'id' => $order->id],
-       ],
-       // optional route overrides
-       // 'success_url' => route('thank.you'),
-       // 'failure_url' => route('payment.failed'),
-   ]);
-   ```
-3. The response is an HTML page with a self-submitting form that posts to the proper eSewa endpoint.
+Create your order/booking as usual. In your controller, generate the UUID, queue the delayed reconciliation job, then return the payment form using the same UUID.
+
+```php
+use Illuminate\Support\Str;
+use App\Jobs\ReconcileEsewaPaymentJob;
+
+public function payOrder(\App\Models\Order $order)
+{
+    // Generate a UUID you control (so jobs/admin tools can reference it)
+    $uuid = now()->format('ymd-His').'-'.Str::upper(Str::random(4));
+
+    // Schedule a safety-net reconcile in case the browser callback never arrives
+    ReconcileEsewaPaymentJob::dispatch($uuid)->delay(now()->addMinutes(8));
+
+    // Return the auto-submitting eSewa form
+    return \Esewa::pay([
+        'transaction_uuid'        => $uuid,                 // use the same UUID
+        'amount'                  => (int) $order->total,
+        'total_amount'            => (int) $order->total,
+        'tax_amount'              => 0,
+        'product_service_charge'  => 0,
+        'product_delivery_charge' => 0,
+        'meta' => [
+            'payable' => ['type' => $order::class, 'id' => $order->id],
+        ],
+        // Optional overrides:
+        // 'success_url' => route('thank.you'),
+        // 'failure_url' => route('payment.failed'),
+    ]);
+}
+```
+
+The response is an HTML page with a self-submitting form that posts to the correct eSewa endpoint.
 
 ## Package Routes
 
@@ -102,9 +117,161 @@ public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event): vo
 }
 ```
 
+## Reconciliation Safety Nets
+
+Delayed jobs, scheduled sweeps, and manual tools ensure you update stale payments even if callbacks fail.
+
+### A) Delayed job fallback
+
+1. Create the job
+   ```bash
+   php artisan make:job ReconcileEsewaPaymentJob
+   ```
+2. Implement the job (`app/Jobs/ReconcileEsewaPaymentJob.php`):
+
+   ```php
+   <?php
+
+   namespace App\Jobs;
+
+   use AjayMahato\Esewa\Models\EsewaPayment;
+   use AjayMahato\Esewa\Events\EsewaPaymentVerified;
+   use Illuminate\Bus\Queueable;
+   use Illuminate\Contracts\Queue\ShouldQueue;
+
+   class ReconcileEsewaPaymentJob implements ShouldQueue
+   {
+       use Queueable;
+
+       public function __construct(public string $uuid) {}
+
+       public function handle(): void
+       {
+           $payment = EsewaPayment::where('transaction_uuid', $this->uuid)->first();
+
+           if (! $payment || ($payment->status?->value ?? $payment->status) === 'COMPLETE') {
+               return; // nothing to do
+           }
+
+           $resp = \Esewa::statusCheck(
+               $payment->product_code,
+               (string) $payment->total_amount,
+               $payment->transaction_uuid
+           );
+
+           $payment->update([
+               'raw_response' => $resp,
+               'ref_id'       => $resp['ref_id'] ?? $payment->ref_id,
+               'status'       => $resp['status'] ?? $payment->status,
+           ]);
+
+           if (($resp['status'] ?? null) === 'COMPLETE') {
+               event(new EsewaPaymentVerified($payment->fresh()));
+           }
+       }
+   }
+   ```
+
+3. Dispatch it when you start the payment (already shown above). The job should run ~8–10 minutes later and only act if the row is still `PENDING`.
+
+### B) Scheduled sweep (belt-and-suspenders)
+
+1. Generate the command
+   ```bash
+   php artisan make:command EsewaReconcileCommand
+   ```
+2. Implement the command (`app/Console/Commands/EsewaReconcileCommand.php`):
+
+   ```php
+   <?php
+
+   namespace App\Console\Commands;
+
+   use Illuminate\Console\Command;
+   use AjayMahato\Esewa\Models\EsewaPayment;
+   use AjayMahato\Esewa\Events\EsewaPaymentVerified;
+
+   class EsewaReconcileCommand extends Command
+   {
+       protected $signature = 'esewa:reconcile {uuid?}';
+       protected $description = 'Reconcile pending eSewa payments (or a single UUID)';
+
+       public function handle(): int
+       {
+           $query = EsewaPayment::query()->where('status', 'PENDING');
+
+           if ($uuid = $this->argument('uuid')) {
+               $query->where('transaction_uuid', $uuid);
+           }
+
+           $query->chunkById(100, function ($payments) {
+               foreach ($payments as $payment) {
+                   $resp = \Esewa::statusCheck(
+                       $payment->product_code,
+                       (string) $payment->total_amount,
+                       $payment->transaction_uuid
+                   );
+
+                   $payment->update([
+                       'raw_response' => $resp,
+                       'ref_id'       => $resp['ref_id'] ?? $payment->ref_id,
+                       'status'       => $resp['status'] ?? $payment->status,
+                   ]);
+
+                   if (($resp['status'] ?? null) === 'COMPLETE') {
+                       event(new EsewaPaymentVerified($payment->fresh()));
+                   }
+               }
+           });
+
+           $this->info('Reconciliation run complete.');
+           return self::SUCCESS;
+       }
+   }
+   ```
+
+3. Schedule it (e.g. hourly) in `app/Console/Kernel.php`:
+   ```php
+   protected function schedule(\Illuminate\Console\Scheduling\Schedule $schedule): void
+   {
+       $schedule->command('esewa:reconcile')->hourly(); // or everyTenMinutes()
+   }
+   ```
+
+### C) Manual admin action
+
+Provide customer support with a button to reconcile a single payment on demand.
+
+```php
+public function reconcile(string $uuid)
+{
+    $payment = \AjayMahato\Esewa\Models\EsewaPayment::where('transaction_uuid', $uuid)->firstOrFail();
+
+    $resp = \Esewa::statusCheck(
+        $payment->product_code,
+        (string) $payment->total_amount,
+        $payment->transaction_uuid
+    );
+
+    $payment->update([
+        'raw_response' => $resp,
+        'ref_id'       => $resp['ref_id'] ?? $payment->ref_id,
+        'status'       => $resp['status'] ?? $payment->status,
+    ]);
+
+    if (($resp['status'] ?? null) === 'COMPLETE') {
+        event(new \AjayMahato\Esewa\Events\EsewaPaymentVerified($payment->fresh()));
+    }
+
+    return back()->with('status', 'Reconciled.');
+}
+```
+
+**Recommended setup:** dispatch the delayed job for every payment, keep the scheduled sweep as a backstop, and expose the manual action for support/admin tooling.
+
 ## Status Check Workflow
 
-Use the client if you need to reconcile manually or recover from missed callbacks:
+If you need to run a status check manually, re-use the model and facade helpers:
 
 ```php
 $payment = \AjayMahato\Esewa\Models\EsewaPayment::where('transaction_uuid', $uuid)->firstOrFail();
