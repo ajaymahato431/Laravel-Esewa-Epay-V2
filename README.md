@@ -1,4 +1,4 @@
-﻿# Laravel eSewa ePay v2
+# Laravel eSewa ePay v2
 
 Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, post to the ePay form endpoint, verify callbacks, and record every attempt in your database with a single facade call.
 
@@ -192,7 +192,7 @@ Delayed jobs, scheduled sweeps, and manual tools ensure you update stale payment
    }
    ```
 
-3. Dispatch it when you start the payment (already shown above). The job should run ~8–10 minutes later and only act if the row is still `PENDING`.
+3. Dispatch it when you start the payment (already shown above). The job should run ~8�10 minutes later and only act if the row is still `PENDING`.
 
 ### B) Scheduled sweep (belt-and-suspenders)
 
@@ -291,9 +291,9 @@ public function reconcile(string $uuid)
 
 ## Local development (localhost callbacks)
 
-The `/esewa/callback` route now accepts both `POST` (the server-to-server webhook) and `GET` requests. When eSewa redirects a browser back to your app (or when you manually open the URL in local testing) the package will call eSewa's status API, update the `esewa_payments` row, fire `EsewaPaymentVerified` once the status flips to `COMPLETE`, and then either show a lightweight confirmation screen or redirect wherever you ask.
+The `/esewa/callback` route expects the signed Base64 payload that eSewa appends to your success and failure URLs. Regardless of whether the callback arrives via their server-to-server POST or the customer redirect (GET), the package decodes the `data` value, validates the HMAC signature listed in `signed_field_names`, and only then mutates your `esewa_payments` row.
 
-On localhost you can simply open `http://127.0.0.1:8000/esewa/callback?transaction_uuid={uuid}` after eSewa returns you to the browser. The package reconciles the payment in the background and renders the status page, so you no longer need ngrok just to finish the workflow. In staging/production you should still keep the webhook URL registered with eSewa so their POST callback can reach your app instantly; the GET fallback exists for development tunnels and manual support reconciliations.
+If you hit the URL without the signed payload the request is rejected with HTTP 422, so end users cannot flip a payment just by guessing a UUID. For manual testing, capture the `data=...` query string that eSewa sends back to your browser and paste it into your local callback URL, or use the helper from the test suite to generate a signed payload.
 
 ## Security Notes
 
@@ -304,3 +304,4 @@ On localhost you can simply open `http://127.0.0.1:8000/esewa/callback?transacti
 ## License
 
 Released under the MIT License.
+

@@ -15,16 +15,14 @@ class CallbackController extends Controller
 {
     public function handle(Request $request)
     {
-        if ($request->isMethod('get')) {
-            return $this->handleBrowserCallback($request);
-        }
-
-        return $this->handleServerCallback($request);
+        return $request->isMethod('post')
+            ? $this->handleServerCallback($request)
+            : $this->handleBrowserCallback($request);
     }
 
     protected function handleServerCallback(Request $request)
     {
-        $base64 = $request->input('data');
+        $base64 = $this->resolvePayload($request);
 
         if (!$base64) {
             return response()->json(['ok' => false, 'error' => 'Missing callback payload.'], 422);
@@ -32,97 +30,113 @@ class CallbackController extends Controller
 
         try {
             $verified = Esewa::verifyCallback($base64);
+            $payment  = $this->persistPayment($verified);
         } catch (EsewaException $e) {
             return response()->json(['ok' => false, 'error' => $e->getMessage()], 422);
         }
 
-        if (empty($verified['transaction_uuid'])) {
-            return response()->json(['ok' => false, 'error' => 'Callback payload missing transaction_uuid.'], 422);
-        }
-
-        $payment = EsewaPayment::query()
-            ->where('transaction_uuid', $verified['transaction_uuid'])
-            ->first();
-
-        if (!$payment) {
-            $payment = EsewaPayment::create([
-                'transaction_uuid' => $verified['transaction_uuid'],
-                'product_code'     => $verified['product_code'] ?? config('esewa.product_code'),
-                'amount'           => (int)($verified['total_amount'] ?? 0),
-                'tax_amount'       => 0,
-                'service_charge'   => 0,
-                'delivery_charge'  => 0,
-                'total_amount'     => (int)($verified['total_amount'] ?? 0),
-                'status'           => PaymentStatus::from($verified['status'] ?? 'PENDING'),
-            ]);
-        }
-
-        $payment->update([
-            'status'       => PaymentStatus::from($verified['status'] ?? 'PENDING'),
-            'ref_id'       => $verified['transaction_code'] ?? $verified['ref_id'] ?? null,
-            'verified_at'  => Carbon::now(),
-            'raw_response' => $verified,
+        return response()->json([
+            'ok'     => true,
+            'data'   => $verified,
+            'status' => $payment->status->value,
         ]);
-
-        $freshPayment = $payment->fresh();
-
-        event(new EsewaPaymentVerified($freshPayment));
-
-        return response()->json(['ok' => true, 'data' => $verified]);
     }
 
     protected function handleBrowserCallback(Request $request)
     {
-        $uuid = $this->resolveTransactionUuid($request);
+        $base64 = $this->resolvePayload($request);
 
-        if (!$uuid) {
+        if (!$base64) {
             return $this->renderBrowserResponse($request, [
                 'ok'      => false,
-                'message' => 'Missing transaction_uuid query parameter.',
+                'message' => 'Missing callback payload. Ensure your success_url/failure_url forwards the signed Base64 response from eSewa.',
             ], null, null, 422);
         }
 
-        $payment = EsewaPayment::query()
-            ->where('transaction_uuid', $uuid)
-            ->first();
-
-        if (!$payment) {
-            return $this->renderBrowserResponse($request, [
-                'ok'      => false,
-                'message' => "No payment record found for transaction_uuid {$uuid}.",
-            ], null, null, 404);
-        }
-
         try {
-            $statusResponse = Esewa::statusCheck(
-                $payment->product_code,
-                (string)$payment->total_amount,
-                $payment->transaction_uuid
-            );
+            $verified = Esewa::verifyCallback($base64);
+            $payment  = $this->persistPayment($verified);
         } catch (EsewaException $e) {
             return $this->renderBrowserResponse($request, [
                 'ok'      => false,
                 'message' => $e->getMessage(),
-            ], $payment, null, 502);
+            ], null, null, 422);
         }
 
-        $updates = [
-            'raw_response' => $statusResponse,
-        ];
+        $ok = $payment->status === PaymentStatus::COMPLETE;
 
-        if (!empty($statusResponse['status'])) {
-            $updates['status'] = PaymentStatus::from($statusResponse['status']);
+        return $this->renderBrowserResponse($request, [
+            'ok'      => $ok,
+            'message' => $this->browserMessageFromStatus($payment->status, $payment->transaction_uuid),
+            'status'  => $payment->status->value,
+            'ref_id'  => $payment->ref_id,
+        ], $payment, $verified, $ok ? 200 : 202);
+    }
+
+    protected function resolvePayload(Request $request): ?string
+    {
+        foreach (['data', 'payload', 'response'] as $key) {
+            $value = $request->input($key, $request->query($key));
+            if ($value) {
+                return (string) $value;
+            }
         }
 
-        if (!empty($statusResponse['transaction_code']) || !empty($statusResponse['ref_id'])) {
-            $updates['ref_id'] = $statusResponse['transaction_code'] ?? $statusResponse['ref_id'];
+        return null;
+    }
+
+    protected function persistPayment(array $verified): EsewaPayment
+    {
+        if (empty($verified['transaction_uuid'])) {
+            throw new EsewaException('Callback payload missing transaction_uuid.');
         }
 
-        if (($updates['status'] ?? $payment->status) === PaymentStatus::COMPLETE) {
-            $updates['verified_at'] = $payment->verified_at ?? Carbon::now();
+        $uuid        = (string) $verified['transaction_uuid'];
+        $status      = $this->resolveStatus($verified['status'] ?? null);
+        $totalAmount = $this->normalizeAmount($verified['total_amount'] ?? null);
+
+        $payment = EsewaPayment::query()->where('transaction_uuid', $uuid)->first();
+
+        if ($payment) {
+            $this->guardPaymentConsistency($payment, $verified, $totalAmount);
+        } else {
+            if ($totalAmount <= 0) {
+                throw new EsewaException('Callback payload missing total_amount for new transaction.');
+            }
+
+            $payment = EsewaPayment::create([
+                'transaction_uuid' => $uuid,
+                'product_code'     => (string) ($verified['product_code'] ?? config('esewa.product_code')),
+                'amount'           => $this->normalizeAmount($verified['amount'] ?? $totalAmount),
+                'tax_amount'       => $this->normalizeAmount($verified['tax_amount'] ?? 0),
+                'service_charge'   => $this->normalizeAmount($verified['product_service_charge'] ?? 0),
+                'delivery_charge'  => $this->normalizeAmount($verified['product_delivery_charge'] ?? 0),
+                'total_amount'     => $totalAmount,
+                'status'           => $status,
+                'ref_id'           => $verified['transaction_code'] ?? $verified['ref_id'] ?? null,
+                'raw_response'     => $verified,
+                'verified_at'      => $status === PaymentStatus::COMPLETE ? Carbon::now() : null,
+            ]);
+
+            if ($status === PaymentStatus::COMPLETE) {
+                event(new EsewaPaymentVerified($payment));
+            }
+
+            return $payment;
         }
 
         $previousStatus = $payment->status;
+
+        $updates = [
+            'status'       => $status,
+            'ref_id'       => $verified['transaction_code'] ?? $verified['ref_id'] ?? $payment->ref_id,
+            'raw_response' => $verified,
+        ];
+
+        if ($status === PaymentStatus::COMPLETE && !$payment->verified_at) {
+            $updates['verified_at'] = Carbon::now();
+        }
+
         $payment->update($updates);
         $payment->refresh();
 
@@ -130,12 +144,59 @@ class CallbackController extends Controller
             event(new EsewaPaymentVerified($payment));
         }
 
-        return $this->renderBrowserResponse($request, [
-            'ok'      => true,
-            'message' => 'Payment status reconciled.',
-            'status'  => $payment->status->value,
-            'ref_id'  => $payment->ref_id,
-        ], $payment, $statusResponse, 200);
+        return $payment;
+    }
+
+    protected function guardPaymentConsistency(EsewaPayment $payment, array $verified, int $totalAmount): void
+    {
+        $productCode = $verified['product_code'] ?? null;
+
+        if ($productCode && $payment->product_code !== $productCode) {
+            throw new EsewaException('Product code mismatch for transaction ' . $payment->transaction_uuid . '.');
+        }
+
+        if ($totalAmount > 0 && (int) $payment->total_amount !== $totalAmount) {
+            throw new EsewaException('Total amount mismatch for transaction ' . $payment->transaction_uuid . '.');
+        }
+    }
+
+    protected function resolveStatus($status): PaymentStatus
+    {
+        if ($status === null) {
+            return PaymentStatus::PENDING;
+        }
+
+        if (is_string($status)) {
+            $status = strtoupper($status);
+        }
+
+        return PaymentStatus::tryFrom((string) $status) ?? PaymentStatus::PENDING;
+    }
+
+    protected function normalizeAmount($value): int
+    {
+        if ($value === null || $value === '') {
+            return 0;
+        }
+
+        if (!is_numeric($value)) {
+            $value = preg_replace('/[^0-9\.]/', '', (string) $value);
+        }
+
+        return (int) round((float) $value);
+    }
+
+    protected function browserMessageFromStatus(PaymentStatus $status, string $uuid): string
+    {
+        return match ($status) {
+            PaymentStatus::COMPLETE       => 'Payment verified successfully.',
+            PaymentStatus::PENDING        => "Payment for {$uuid} is still processing.",
+            PaymentStatus::AMBIGUOUS      => "Payment for {$uuid} is in an ambiguous state. Please verify later.",
+            PaymentStatus::CANCELED       => "Payment for {$uuid} was canceled. Please try again.",
+            PaymentStatus::NOT_FOUND      => "We could not locate transaction {$uuid}.",
+            PaymentStatus::FULL_REFUND    => "Payment for {$uuid} has been fully refunded.",
+            PaymentStatus::PARTIAL_REFUND => "Payment for {$uuid} has been partially refunded.",
+        };
     }
 
     protected function renderBrowserResponse(Request $request, array $meta, ?EsewaPayment $payment, ?array $raw, int $status)
@@ -162,17 +223,5 @@ class CallbackController extends Controller
         $redirect = $request->query('redirect');
 
         return $redirect ?: null;
-    }
-
-    protected function resolveTransactionUuid(Request $request): ?string
-    {
-        foreach (['transaction_uuid', 'transactionUuid', 'transaction_id', 'transactionId', 'uuid', 'oid'] as $key) {
-            $value = $request->query($key);
-            if ($value) {
-                return (string)$value;
-            }
-        }
-
-        return null;
     }
 }
