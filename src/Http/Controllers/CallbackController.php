@@ -15,52 +15,25 @@ class CallbackController extends Controller
 {
     public function handle(Request $request)
     {
-        return $request->isMethod('post')
-            ? $this->handleServerCallback($request)
-            : $this->handleBrowserCallback($request);
-    }
-
-    protected function handleServerCallback(Request $request)
-    {
         $base64 = $this->resolvePayload($request);
 
         if (!$base64) {
-            return response()->json(['ok' => false, 'error' => 'Missing callback payload.'], 422);
+            return $this->respondFailure($request, 'Missing callback payload.');
         }
 
         try {
             $verified = Esewa::verifyCallback($base64);
             $payment  = $this->persistPayment($verified);
         } catch (EsewaException $e) {
-            return response()->json(['ok' => false, 'error' => $e->getMessage()], 422);
+            return $this->respondFailure($request, $e->getMessage());
         }
 
-        return response()->json([
-            'ok'     => true,
-            'data'   => $verified,
-            'status' => $payment->status->value,
-        ]);
-    }
-
-    protected function handleBrowserCallback(Request $request)
-    {
-        $base64 = $this->resolvePayload($request);
-
-        if (!$base64) {
-            return $this->renderBrowserResponse($request, [
-                'ok'      => false,
-                'message' => 'Missing callback payload. Ensure your success_url/failure_url forwards the signed Base64 response from eSewa.',
-            ], null, null, 422);
-        }
-
-        try {
-            $verified = Esewa::verifyCallback($base64);
-            $payment  = $this->persistPayment($verified);
-        } catch (EsewaException $e) {
-            return $this->renderBrowserResponse($request, [
-                'ok'      => false,
-                'message' => $e->getMessage(),
-            ], null, null, 422);
+        if ($request->wantsJson() || $request->expectsJson()) {
+            return response()->json([
+                'ok'     => true,
+                'data'   => $verified,
+                'status' => $payment->status->value,
+            ]);
         }
 
         $ok = $payment->status === PaymentStatus::COMPLETE;
@@ -73,10 +46,22 @@ class CallbackController extends Controller
         ], $payment, $verified, $ok ? 200 : 202);
     }
 
+    protected function respondFailure(Request $request, string $message)
+    {
+        if ($request->wantsJson() || $request->expectsJson()) {
+            return response()->json(['ok' => false, 'error' => $message], 422);
+        }
+
+        return $this->renderBrowserResponse($request, [
+            'ok'      => false,
+            'message' => $message,
+        ], null, null, 422);
+    }
+
     protected function resolvePayload(Request $request): ?string
     {
         foreach (['data', 'payload', 'response'] as $key) {
-            $value = $request->input($key, $request->query($key));
+            $value = $request->input($key);
             if ($value) {
                 return (string) $value;
             }
@@ -220,7 +205,7 @@ class CallbackController extends Controller
 
     protected function resolveRedirectUrl(Request $request): ?string
     {
-        $redirect = $request->query('redirect');
+        $redirect = $request->input('redirect', $request->query('redirect'));
 
         return $redirect ?: null;
     }

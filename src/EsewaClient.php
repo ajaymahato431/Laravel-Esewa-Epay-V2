@@ -2,9 +2,11 @@
 
 namespace AjayMahato\Esewa;
 
+use AjayMahato\Esewa\Exceptions\EsewaException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
-use AjayMahato\Esewa\Exceptions\EsewaException;
+use function route;
+use function url;
 
 class EsewaClient
 {
@@ -48,8 +50,20 @@ class EsewaClient
     public function buildFormPayload(array $params, array $override = []): array
     {
         $productCode = $this->config['product_code'];
-        $successUrl  = $override['success_url'] ?? $this->config['success_url'];
-        $failureUrl  = $override['failure_url'] ?? $this->config['failure_url'];
+
+        $successUrl = $this->resolveUrl(
+            $params['success_url']
+            ?? ($override['success_url'] ?? null)
+            ?? ($this->config['success_url'] ?? null)
+        );
+
+        $failureUrl = $this->resolveUrl(
+            $params['failure_url']
+            ?? ($override['failure_url'] ?? null)
+            ?? ($this->config['failure_url'] ?? null)
+        );
+
+        $relayUrl = $this->relayUrl();
 
         $payload = [
             'amount'                  => $params['amount'],
@@ -59,26 +73,54 @@ class EsewaClient
             'total_amount'            => $params['total_amount'],
             'transaction_uuid'        => $params['transaction_uuid'] ?? Str::uuid()->toString(),
             'product_code'            => $productCode,
-            'success_url'             => $params['success_url'] ?? $successUrl,
-            'failure_url'             => $params['failure_url'] ?? $failureUrl,
+            'success_url'             => $successUrl ?? $relayUrl,
+            'failure_url'             => $failureUrl ?? $relayUrl,
             'signed_field_names'      => 'total_amount,transaction_uuid,product_code',
         ];
 
         $payload['signature'] = $this->buildRequestSignature(
-            (string)$payload['total_amount'],
-            (string)$payload['transaction_uuid'],
+            (string) $payload['total_amount'],
+            (string) $payload['transaction_uuid'],
         );
 
         return $payload;
     }
 
+    protected function resolveUrl(?string $value): ?string
+    {
+        if (!$value) {
+            return null;
+        }
+
+        if (preg_match('/^https?:\/\//i', $value)) {
+            return $value;
+        }
+
+        return url($value);
+    }
+
+    protected function relayUrl(): string
+    {
+        try {
+            return route('esewa.relay');
+        } catch (\Throwable $e) {
+            $fallback = $this->resolveUrl($this->config['success_url'] ?? null);
+
+            return $fallback ?? url('/esewa/relay');
+        }
+    }
+
     public function verifyCallback(string $base64Json): array
     {
         $json = base64_decode($base64Json, true);
-        if ($json === false) throw new EsewaException('Invalid Base64 payload.');
+        if ($json === false) {
+            throw new EsewaException('Invalid Base64 payload.');
+        }
 
         $data = json_decode($json, true);
-        if (!is_array($data)) throw new EsewaException('Invalid JSON payload.');
+        if (!is_array($data)) {
+            throw new EsewaException('Invalid JSON payload.');
+        }
 
         if (empty($data['signed_field_names']) || empty($data['signature'])) {
             throw new EsewaException('Missing signature metadata.');

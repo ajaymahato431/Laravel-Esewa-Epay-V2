@@ -1,13 +1,15 @@
-﻿<?php
+<?php
 
 use Illuminate\Support\Facades\Route;
 use AjayMahato\Esewa\Http\Controllers\StartController;
 use AjayMahato\Esewa\Http\Controllers\CallbackController;
+use AjayMahato\Esewa\Http\Controllers\RelayController;
 
 Route::group([
     'prefix' => config('esewa.route_prefix', ''),
     'middleware' => config('esewa.middleware', ['web']),
 ], function () {
     Route::post('/esewa/pay', [StartController::class, 'start'])->name('esewa.pay');
-    Route::match(['GET', 'POST'], '/esewa/callback', [CallbackController::class, 'handle'])->name('esewa.callback');
+    Route::post('/esewa/callback', [CallbackController::class, 'handle'])->name('esewa.callback');
+    Route::get('/esewa/relay', RelayController::class)->name('esewa.relay');
 });
