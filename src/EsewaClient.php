@@ -99,14 +99,12 @@ class EsewaClient
         return url($value);
     }
 
-    protected function relayUrl(): string
+    public function relayUrl(): string
     {
         try {
             return route('esewa.relay');
         } catch (\Throwable $e) {
-            $fallback = $this->resolveUrl($this->config['success_url'] ?? null);
-
-            return $fallback ?? url('/esewa/relay');
+            return url('/esewa/relay');
         }
     }
 

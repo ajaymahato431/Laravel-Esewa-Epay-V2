@@ -9,24 +9,40 @@ class RelayController extends Controller
 {
     public function __invoke(Request $request)
     {
-        $payload = $request->query('data');
+        [$payload, $redirect] = $this->extractPayloadAndRedirect($request);
 
         if (!$payload) {
-            abort(422, 'Missing data query parameter.');
+            return response()->view('esewa::callback-status', [
+                'meta' => [
+                    'ok'      => false,
+                    'message' => 'We could not verify your payment because eSewa has not sent the signed payload yet.',
+                ],
+                'payment'     => null,
+                'raw'         => null,
+                'statusCode'  => 422,
+                'redirectUrl' => $redirect,
+            ], 422);
         }
 
         return response()->view('esewa::relay', [
             'data'     => $payload,
-            'redirect' => $this->resolveRedirect($request),
+            'redirect' => $redirect,
             'method'   => 'POST',
             'action'   => route('esewa.callback'),
         ]);
     }
 
-    protected function resolveRedirect(Request $request): ?string
+    protected function extractPayloadAndRedirect(Request $request): array
     {
-        $redirect = $request->query('redirect');
+        $payload  = $request->input('data', $request->query('data'));
+        $redirect = $request->input('redirect', $request->query('redirect'));
 
-        return $redirect ?: null;
+        if (!$payload && $redirect && str_contains($redirect, '?data=')) {
+            [$cleanRedirect, $fromRedirect] = explode('?data=', $redirect, 2);
+            $redirect = $cleanRedirect ?: null;
+            $payload  = $fromRedirect ?: null;
+        }
+
+        return [$payload ?: null, $redirect ?: null];
     }
 }

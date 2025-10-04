@@ -11,5 +11,5 @@ Route::group([
 ], function () {
     Route::post('/esewa/pay', [StartController::class, 'start'])->name('esewa.pay');
     Route::post('/esewa/callback', [CallbackController::class, 'handle'])->name('esewa.callback');
-    Route::get('/esewa/relay', RelayController::class)->name('esewa.relay');
+    Route::match(['GET','POST'], '/esewa/relay', RelayController::class)->name('esewa.relay');
 });
