@@ -1,6 +1,6 @@
 # Laravel eSewa ePay v2
 
-Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, post to the ePay form endpoint, verify callbacks, and record every attempt in your database with a single facade call.
+Laravel eSewa ePay v2 integration for Laravel 10/11/12. Generate HMAC signatures, post to the ePay form endpoint, verify callbacks, and record every attempt in your database with a single facade call.
 
 ## Features
 
@@ -13,8 +13,20 @@ Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, p
 ## Requirements
 
 - PHP 8.1+
-- Laravel 10 or 11 (or any app with `illuminate/support` 10/11)
+- Laravel 10 or 11 (or any app with `illuminate/support` 10/11/12)
 - eSewa merchant credentials for UAT or Production
+
+## Payment Status Constants/Enums
+
+```php
+    case PENDING        = 'PENDING';
+    case COMPLETE       = 'COMPLETE';
+    case FULL_REFUND    = 'FULL_REFUND';
+    case PARTIAL_REFUND = 'PARTIAL_REFUND';
+    case AMBIGUOUS      = 'AMBIGUOUS';
+    case NOT_FOUND      = 'NOT_FOUND';
+    case CANCELED       = 'CANCELED';
+```
 
 ## Installation
 
@@ -33,10 +45,10 @@ Laravel eSewa ePay v2 integration for Laravel 10/11. Generate HMAC signatures, p
    ESEWA_MODE=uat                 # uat (testing) or production
    ESEWA_PRODUCT_CODE=EPAYTEST     # merchant code
    ESEWA_SECRET_KEY=8gBm/:&EnhH.1/q
+   ESEWA_SUCCESS_URL=https://your-app.com/esewa/relay
+   ESEWA_FAILURE_URL=https://your-app.com/esewa/relay
 
    # Optional overrides
-   ESEWA_SUCCESS_URL=https://your-app.com/esewa/success
-   ESEWA_FAILURE_URL=https://your-app.com/esewa/failure
    ESEWA_ROUTE_PREFIX=             # set if you want /prefix/esewa/...
    ```
 
@@ -78,18 +90,13 @@ public function payOrder(\App\Models\Order $order)
         'meta' => [
             'payable' => ['type' => $order::class, 'id' => $order->id],
         ],
-        // Optional overrides:
-        // 'success_url' => route('thank.you'),
-        // 'failure_url' => route('payment.failed'),
+        'success_url' => route('thank.you'),        //it should be different from .env urls
+        'failure_url' => route('payment.failed'),   //put the success or failed page routes here
     ]);
 }
 ```
 
-The response is an HTML page with a self-submitting form that posts to the correct eSewa endpoint.
-
 ## Handling Verified Payments
-
-When eSewa redirects back, the package verifies the Base64 payload, stores the response in esewa_payments, updates status/ref_id/verified_at, and fires `AjayMahato\Esewa\Events\EsewaPaymentVerified`.
 
 Hook one listener to flip your own record (booking/order/cart) to PAID.
 
@@ -137,9 +144,9 @@ return $this->payment_status === 'PAID';
 }
 ```
 
-## Reconciliation Safety Nets
+## Reconciliation Safety Nets (Optional to make the project more Secure)
 
-Delayed jobs, scheduled sweeps, and manual tools ensure you update stale payments even if callbacks fail.
+Delayed jobs, scheduled sweeps, and manual tools ensure you update stale payments even if callbacks fail. Choose any one option among the three according to your convenience.
 
 ### A) Delayed job fallback
 
@@ -192,7 +199,7 @@ Delayed jobs, scheduled sweeps, and manual tools ensure you update stale payment
    }
    ```
 
-3. Dispatch it when you start the payment (already shown above). The job should run ~8–10 minutes later and only act if the row is still `PENDING`.
+3. Dispatch it when you start the payment (already shown above). The job should run ~8ï¿½10 minutes later and only act if the row is still `PENDING`.
 
 ### B) Scheduled sweep (belt-and-suspenders)
 
@@ -289,12 +296,6 @@ public function reconcile(string $uuid)
 
 **Recommended setup:** dispatch the delayed job for every payment, keep the scheduled sweep as a backstop, and expose the manual action for support/admin tooling.
 
-## Local development (localhost callbacks)
-
-The `/esewa/callback` route now only accepts POST requests. Configure eSewa to send its success and failure redirects to `/esewa/relay` (the package appends the transaction UUID for each checkout automatically). When you call `Esewa::pay()` you can still provide `success_url` and `failure_url`; the package stores those values in the `esewa_payments.meta` column and uses them for the final redirect after the signature is verified.
-
-The relay page accepts both GET and POST callbacks from eSewa, then auto-posts the signed `data` payload back to `/esewa/callback`, and the callback responds with either a redirect to the stored URL or the built-in status view. If someone opens the relay URL without the `data` string the request fails with HTTP 422, so a guessed UUID can no longer mark a payment as complete. For manual testing, copy the `data=...` string from the eSewa redirect into the relay URL or use the helper from the test suite to craft a signed payload.
-
 ## Security Notes
 
 - Request signature order: `total_amount,transaction_uuid,product_code`
@@ -304,4 +305,3 @@ The relay page accepts both GET and POST callbacks from eSewa, then auto-posts t
 ## License
 
 Released under the MIT License.
-
