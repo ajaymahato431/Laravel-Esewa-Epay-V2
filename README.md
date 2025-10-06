@@ -103,10 +103,10 @@ Hook one listener to flip your own record (booking/order/cart) to PAID.
 1. Make the listener
 
 ```php
-php artisan make:listener SetPayablePaid
+php artisan make:listener MarkOrderPaid
 ```
 
-app/Listeners/SetPayablePaid.php
+app/Listeners/MarkOrderPaid.php
 
 ```php
 public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event): void
