@@ -34,8 +34,9 @@ jobs:
           - { laravel: '12', php: '8.2', testbench: '10.*', pest: '^3.0' }
           - { laravel: '12', php: '8.3', testbench: '10.*', pest: '^3.0' }
           - { laravel: '12', php: '8.4', testbench: '10.*', pest: '^3.0' }
-          - { laravel: '13', php: '8.3', testbench: '11.*', pest: '^5.0' }
-          - { laravel: '13', php: '8.4', testbench: '11.*', pest: '^5.0' }
+          # Pest 5 requires PHP 8.4, so 8.3 stays on Pest 4 here.
+          - { laravel: '13', php: '8.3', testbench: '11.*', pest: '^4.0|^5.0' }
+          - { laravel: '13', php: '8.4', testbench: '11.*', pest: '^4.0|^5.0' }
 
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +48,18 @@ jobs:
           extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_sqlite, bcmath
           coverage: none
 
+      - name: Allow the end-of-life releases this matrix exists to test
+        # Composer 2.9+ refuses to install any release named in a security
+        # advisory. Laravel 10 and 11 are both past their security window, so
+        # every remaining release of each is flagged - and so is every
+        # phpunit/phpunit 10.5.x, which is what Pest 2 pins. That leaves the
+        # older half of this matrix unresolvable by default. Exercising those
+        # versions is the entire point of the job and nothing here is deployed,
+        # so these two are exempted by name; an advisory against anything else
+        # still fails the run.
+        run: |
+          composer config --json policy.advisories.ignore '["laravel/framework","phpunit/phpunit"]'
+
       - name: Install dependencies
         run: |
           composer require --dev --no-update --no-interaction \
@@ -55,7 +68,11 @@ jobs:
           composer update --prefer-dist --prefer-stable --no-interaction
 
       - name: Show what resolved
-        run: composer show --locked laravel/framework orchestra/testbench pestphp/pest | grep -E '^(name|versions)'
+        # composer show takes one package at a time.
+        run: |
+          for package in laravel/framework orchestra/testbench pestphp/pest; do
+            composer show --locked "$package" | grep -E '^(name|versions)'
+          done
 
       - name: Run tests
         run: vendor/bin/pest --colors=always
@@ -73,7 +90,9 @@ jobs:
           coverage: none
 
       # Proves the declared lower bounds are real rather than aspirational.
+      # See the matrix job for why those two packages skip the advisory check.
       - run: |
+          composer config --json policy.advisories.ignore '["laravel/framework","phpunit/phpunit"]'
           composer require --dev --no-update --no-interaction \
             "orchestra/testbench:8.*" "pestphp/pest:^2.36"
           composer update --prefer-dist --prefer-lowest --no-interaction
