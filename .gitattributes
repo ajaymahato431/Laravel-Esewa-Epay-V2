@@ -1,0 +1,20 @@
+* text=auto eol=lf
+
+*.php  diff=php
+*.md   diff=markdown
+
+# Keep the published package small: nobody installing this needs the test
+# suite, CI configuration or development tooling.
+/.github            export-ignore
+/docs               export-ignore
+/tests              export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/.editorconfig      export-ignore
+/phpunit.xml        export-ignore
+/phpstan.neon       export-ignore
+/pint.json          export-ignore
+/CONTRIBUTING.md    export-ignore
+/CHANGELOG.md       export-ignore
+/UPGRADE.md         export-ignore
+/SECURITY.md        export-ignore

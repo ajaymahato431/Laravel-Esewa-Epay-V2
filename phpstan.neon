@@ -1,0 +1,13 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 5
+    paths:
+        - src
+        # HasEsewaPayments is meant for consumer models, so nothing in src/ uses
+        # it. Including the fixture that does gives PHPStan a real usage to
+        # analyse the trait against.
+        - tests/Fixtures
+    excludePaths:
+        - vendor

@@ -2,305 +2,151 @@
 
 namespace AjayMahato\Esewa\Http\Controllers;
 
-use AjayMahato\Esewa\Enums\PaymentStatus;
-use AjayMahato\Esewa\Events\EsewaPaymentVerified;
 use AjayMahato\Esewa\Exceptions\EsewaException;
-use AjayMahato\Esewa\Facades\Esewa;
 use AjayMahato\Esewa\Models\EsewaPayment;
+use AjayMahato\Esewa\PaymentManager;
+use AjayMahato\Esewa\Support\RedirectGuard;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 
+/**
+ * Where eSewa (or the relay page) delivers the result of a payment.
+ *
+ * All the decision-making lives in {@see PaymentManager}; this only decides what
+ * the browser or API client sees.
+ */
 class CallbackController extends Controller
 {
-    public function handle(Request $request)
+    public function __construct(protected PaymentManager $payments) {}
+
+    public function __invoke(Request $request): Response|RedirectResponse|JsonResponse
     {
-        $base64 = $this->resolvePayload($request);
-
-        if ($base64) {
-            try {
-                $verified = Esewa::verifyCallback($base64);
-                $payment  = $this->persistPayment($verified);
-            } catch (EsewaException $e) {
-                return $this->respondFailure($request, $e->getMessage());
-            }
-
-            if ($request->wantsJson() || $request->expectsJson()) {
-                return response()->json([
-                    'ok'     => true,
-                    'data'   => $verified,
-                    'status' => $payment->status->value,
-                ]);
-            }
-
-            $ok = $payment->status === PaymentStatus::COMPLETE;
-
-            return $this->renderBrowserResponse($request, [
-                'ok'      => $ok,
-                'message' => $this->browserMessageFromStatus($payment->status, $payment->transaction_uuid),
-                'status'  => $payment->status->value,
-                'ref_id'  => $payment->ref_id,
-            ], $payment, $verified, $ok ? 200 : 202);
-        }
-
-        $resolvedUuid = $this->resolveTransactionUuid($request);
-
-        if ($resolvedUuid) {
-            return $this->handleStatusFallback($request, $resolvedUuid);
-        }
-
-        return $this->respondFailure($request, 'Missing callback payload.');
-    }
-
-    protected function respondFailure(Request $request, string $message)
-    {
-        if ($request->wantsJson() || $request->expectsJson()) {
-            return response()->json(['ok' => false, 'error' => $message], 422);
-        }
-
-        return $this->renderBrowserResponse($request, [
-            'ok'      => false,
-            'message' => $message,
-        ], null, null, 422);
-    }
-
-    protected function handleStatusFallback(Request $request, string $uuid)
-    {
-        $payment = EsewaPayment::query()->where('transaction_uuid', $uuid)->first();
-
-        if (!$payment) {
-            return $this->respondFailure($request, "No payment record found for transaction_uuid {$uuid}.");
-        }
-
         try {
-            $statusResponse = Esewa::statusCheck(
-                $payment->product_code,
-                (string) $payment->total_amount,
-                $payment->transaction_uuid
-            );
+            $payment = $this->resolvePayment($request);
         } catch (EsewaException $e) {
-            return $this->respondFailure($request, $e->getMessage());
+            Log::warning("[esewa] Callback rejected: {$e->getMessage()}");
+
+            return $this->failure($request, $e->getMessage());
         }
 
-        $updates = [
-            'raw_response' => $statusResponse,
+        $ok = $payment->status->isComplete();
+
+        $meta = [
+            'ok' => $ok,
+            'status' => $payment->status->value,
+            'message' => $payment->status->label(),
+            'ref_id' => $payment->ref_id,
+            'transaction_uuid' => $payment->transaction_uuid,
         ];
 
-        $statusKey = $statusResponse['status'] ?? null;
-        $resolvedStatus = $payment->status;
-
-        if ($statusKey !== null && $statusKey !== '') {
-            $resolvedStatus = $this->resolveStatus($statusKey);
-            $updates['status'] = $resolvedStatus;
+        if ($this->wantsJson($request)) {
+            return response()->json([
+                'ok' => $ok,
+                'status' => $payment->status->value,
+                'message' => $payment->status->label(),
+                'payment' => $payment->only([
+                    'transaction_uuid', 'product_code', 'total_amount', 'status', 'ref_id', 'verified_at',
+                ]),
+            ], $ok ? 200 : 202);
         }
 
-        if (!empty($statusResponse['transaction_code']) || !empty($statusResponse['ref_id'])) {
-            $updates['ref_id'] = $statusResponse['transaction_code'] ?? $statusResponse['ref_id'];
-        }
-
-        if ($resolvedStatus === PaymentStatus::COMPLETE && !$payment->verified_at) {
-            $updates['verified_at'] = Carbon::now();
-        }
-
-        $previousStatus = $payment->status;
-        $payment->update($updates);
-        $payment->refresh();
-
-        if ($previousStatus !== PaymentStatus::COMPLETE && $payment->status === PaymentStatus::COMPLETE) {
-            event(new EsewaPaymentVerified($payment));
-        }
-
-        $ok = $payment->status === PaymentStatus::COMPLETE;
-
-        return $this->renderBrowserResponse($request, [
-            'ok'      => $ok,
-            'message' => $this->browserMessageFromStatus($payment->status, $payment->transaction_uuid),
-            'status'  => $payment->status->value,
-            'ref_id'  => $payment->ref_id,
-        ], $payment, $statusResponse, $ok ? 200 : 202);
+        return $this->render($request, $meta, $payment, $ok ? 200 : 202);
     }
 
-    protected function resolvePayload(Request $request): ?string
+    /**
+     * Prefer the signed payload; fall back to asking eSewa directly.
+     *
+     * A signed payload proves what happened. When eSewa sends the customer back
+     * without one - which happens on cancellation and on some failure paths -
+     * the transaction id alone is not proof of anything, so we go and ask.
+     *
+     * @throws EsewaException
+     */
+    protected function resolvePayment(Request $request): EsewaPayment
     {
-        foreach (['data', 'payload', 'response'] as $key) {
-            $value = $request->input($key);
-            if ($value) {
-                return (string) $value;
-            }
+        if (($encoded = $this->payments->extractPayload($request)) !== null) {
+            return $this->payments->handleCallback($encoded);
         }
 
-        return null;
-    }
+        $uuid = $this->payments->extractTransactionUuid($request);
 
-    protected function persistPayment(array $verified): EsewaPayment
-    {
-        if (empty($verified['transaction_uuid'])) {
-            throw new EsewaException('Callback payload missing transaction_uuid.');
+        if ($uuid === null) {
+            throw new EsewaException('eSewa did not send a payment payload or a transaction id.');
         }
 
-        $uuid        = (string) $verified['transaction_uuid'];
-        $status      = $this->resolveStatus($verified['status'] ?? null);
-        $totalAmount = $this->normalizeAmount($verified['total_amount'] ?? null);
+        $payment = $this->payments->reconcileTransaction($uuid);
 
-        $payment = EsewaPayment::query()->where('transaction_uuid', $uuid)->first();
-
-        if ($payment) {
-            $this->guardPaymentConsistency($payment, $verified, $totalAmount);
-        } else {
-            if ($totalAmount <= 0) {
-                throw new EsewaException('Callback payload missing total_amount for new transaction.');
-            }
-
-            $payment = EsewaPayment::create([
-                'transaction_uuid' => $uuid,
-                'product_code'     => (string) ($verified['product_code'] ?? config('esewa.product_code')),
-                'amount'           => $this->normalizeAmount($verified['amount'] ?? $totalAmount),
-                'tax_amount'       => $this->normalizeAmount($verified['tax_amount'] ?? 0),
-                'service_charge'   => $this->normalizeAmount($verified['product_service_charge'] ?? 0),
-                'delivery_charge'  => $this->normalizeAmount($verified['product_delivery_charge'] ?? 0),
-                'total_amount'     => $totalAmount,
-                'status'           => $status,
-                'ref_id'           => $verified['transaction_code'] ?? $verified['ref_id'] ?? null,
-                'raw_response'     => $verified,
-                'verified_at'      => $status === PaymentStatus::COMPLETE ? Carbon::now() : null,
-            ]);
-
-            if ($status === PaymentStatus::COMPLETE) {
-                event(new EsewaPaymentVerified($payment));
-            }
-
-            return $payment;
-        }
-
-        $previousStatus = $payment->status;
-
-        $updates = [
-            'status'       => $status,
-            'ref_id'       => $verified['transaction_code'] ?? $verified['ref_id'] ?? $payment->ref_id,
-            'raw_response' => $verified,
-        ];
-
-        if ($status === PaymentStatus::COMPLETE && !$payment->verified_at) {
-            $updates['verified_at'] = Carbon::now();
-        }
-
-        $payment->update($updates);
-        $payment->refresh();
-
-        if ($previousStatus !== PaymentStatus::COMPLETE && $payment->status === PaymentStatus::COMPLETE) {
-            event(new EsewaPaymentVerified($payment));
+        if ($payment === null) {
+            throw new EsewaException("No eSewa payment record for transaction \"{$uuid}\".");
         }
 
         return $payment;
     }
 
-    protected function guardPaymentConsistency(EsewaPayment $payment, array $verified, int $totalAmount): void
+    protected function failure(Request $request, string $message): Response|RedirectResponse|JsonResponse
     {
-        $productCode = $verified['product_code'] ?? null;
-
-        if ($productCode && $payment->product_code !== $productCode) {
-            throw new EsewaException('Product code mismatch for transaction ' . $payment->transaction_uuid . '.');
+        if ($this->wantsJson($request)) {
+            return response()->json(['ok' => false, 'message' => $message], 422);
         }
 
-        if ($totalAmount > 0 && (int) $payment->total_amount !== $totalAmount) {
-            throw new EsewaException('Total amount mismatch for transaction ' . $payment->transaction_uuid . '.');
-        }
+        return $this->render($request, [
+            'ok' => false,
+            'status' => null,
+            'message' => $message,
+        ], null, 422);
     }
 
-    protected function resolveStatus($status): PaymentStatus
-    {
-        if ($status === null) {
-            return PaymentStatus::PENDING;
+    /**
+     * @param array<string, mixed> $meta
+     */
+    protected function render(
+        Request $request,
+        array $meta,
+        ?EsewaPayment $payment,
+        int $status
+    ): Response|RedirectResponse {
+        $redirect = $this->redirectTarget($request, $payment, (bool) ($meta['ok'] ?? false));
+
+        if ($redirect !== null) {
+            return redirect()->to($redirect)->with('esewa', [
+                'meta' => $meta,
+                'payment' => $payment,
+            ]);
         }
 
-        if (is_string($status)) {
-            $status = strtoupper($status);
-        }
-
-        return PaymentStatus::tryFrom((string) $status) ?? PaymentStatus::PENDING;
+        return response()->view('esewa::callback-status', [
+            'meta' => $meta,
+            'payment' => $payment,
+        ], $status);
     }
 
-    protected function normalizeAmount($value): int
+    /**
+     * Decide where to send the customer, refusing any target that would take
+     * them off this application.
+     */
+    protected function redirectTarget(Request $request, ?EsewaPayment $payment, bool $ok): ?string
     {
-        if ($value === null || $value === '') {
-            return 0;
+        $guard = RedirectGuard::fromConfig();
+
+        $requested = $request->input('redirect', $request->query('redirect'));
+
+        if (is_string($requested) && ($safe = $guard->safe($requested)) !== null) {
+            return $safe;
         }
 
-        if (!is_numeric($value)) {
-            $value = preg_replace('/[^0-9\.]/', '', (string) $value);
+        if ($payment !== null && ($stored = $payment->redirectUrl($ok)) !== null) {
+            return $guard->safe($stored);
         }
 
-        return (int) round((float) $value);
+        return $guard->safe(config('esewa.redirect.'.($ok ? 'success' : 'failure')));
     }
 
-    protected function browserMessageFromStatus(PaymentStatus $status, string $uuid): string
+    protected function wantsJson(Request $request): bool
     {
-        return match ($status) {
-            PaymentStatus::COMPLETE       => 'Payment verified successfully.',
-            PaymentStatus::PENDING        => "Payment for {$uuid} is still processing.",
-            PaymentStatus::AMBIGUOUS      => "Payment for {$uuid} is in an ambiguous state. Please verify later.",
-            PaymentStatus::CANCELED       => "Payment for {$uuid} was canceled. Please try again.",
-            PaymentStatus::NOT_FOUND      => "We could not locate transaction {$uuid}.",
-            PaymentStatus::FULL_REFUND    => "Payment for {$uuid} has been fully refunded.",
-            PaymentStatus::PARTIAL_REFUND => "Payment for {$uuid} has been partially refunded.",
-        };
-    }
-
-    protected function resolveTransactionUuid(Request $request): ?string
-    {
-        foreach (['transaction_uuid', 'transactionUuid', 'transaction_id', 'transactionId', 'uuid', 'oid'] as $key) {
-            $value = $request->input($key, $request->query($key));
-            if ($value) {
-                return (string) $value;
-            }
-        }
-
-        $routeUuid = $request->route('transaction');
-        if ($routeUuid) {
-            return (string) $routeUuid;
-        }
-
-        return null;
-    }
-
-    protected function renderBrowserResponse(Request $request, array $meta, ?EsewaPayment $payment, ?array $raw, int $status)
-    {
-        $redirect = $this->resolveRedirectUrl($request, $payment, (bool)($meta['ok'] ?? false));
-
-        $payload = [
-            'meta'        => $meta,
-            'payment'     => $payment,
-            'raw'         => $raw,
-            'statusCode'  => $status,
-            'redirectUrl' => $redirect,
-        ];
-
-        if ($redirect) {
-            return redirect()->to($redirect)->with('esewa', $payload);
-        }
-
-        return response()->view('esewa::callback-status', $payload, $status);
-    }
-
-    protected function resolveRedirectUrl(Request $request, ?EsewaPayment $payment, bool $ok): ?string
-    {
-        $redirect = $request->input('redirect', $request->query('redirect'));
-
-        if ($redirect) {
-            return $redirect;
-        }
-
-        if ($payment && is_array($payment->meta)) {
-            $key = $ok ? 'success_redirect' : 'failure_redirect';
-            $stored = $payment->meta[$key] ?? null;
-            if ($stored) {
-                return $stored;
-            }
-        }
-
-        $configKey = $ok ? 'success_url' : 'failure_url';
-        $configValue = config("esewa.{$configKey}");
-
-        return $configValue ?: null;
+        return $request->expectsJson() || $request->is('api/*');
     }
 }

@@ -2,35 +2,59 @@
 
 namespace AjayMahato\Esewa\Tests;
 
+use AjayMahato\Esewa\EsewaClient;
 use AjayMahato\Esewa\EsewaServiceProvider;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
+    use RefreshDatabase;
 
-        config()->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
-        config()->set('database.default', 'testbench');
-        config()->set('database.connections.testbench', [
+    protected function getPackageProviders($app): array
+    {
+        return [EsewaServiceProvider::class];
+    }
+
+    protected function defineEnvironment($app): void
+    {
+        $config = $app['config'];
+
+        $config->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+        $config->set('app.url', 'http://localhost');
+
+        $config->set('database.default', 'testing');
+        $config->set('database.connections.testing', [
             'driver' => 'sqlite',
             'database' => ':memory:',
             'prefix' => '',
         ]);
 
+        $config->set('esewa.mode', 'uat');
+        $config->set('esewa.product_code', 'EPAYTEST');
+        $config->set('esewa.secret_key', EsewaClient::UAT_SECRET_KEY);
+        $config->set('esewa.redirect.success', null);
+        $config->set('esewa.redirect.failure', null);
+    }
+
+    protected function defineDatabaseMigrations(): void
+    {
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
-        $this->artisan('migrate', ['--database' => 'testbench'])->run();
     }
 
-    protected function tearDown(): void
+    /**
+     * A stand-in application model, so the payable morph can be exercised
+     * without the package shipping one.
+     */
+    protected function createOrdersTable(): void
     {
-        $this->artisan('migrate:reset', ['--database' => 'testbench'])->run();
-        parent::tearDown();
-    }
+        $this->app['db']->connection()->getSchemaBuilder()->create('orders', function ($table) {
+            $table->id();
+            $table->string('reference')->nullable();
+            $table->timestamps();
+        });
 
-    protected function getPackageProviders($app): array
-    {
-        return [EsewaServiceProvider::class];
+        Model::setConnectionResolver($this->app['db']);
     }
 }
