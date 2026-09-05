@@ -3,7 +3,7 @@
 ## Getting set up
 
 ```bash
-git clone https://github.com/ajaymahato/laravel-esewa-epay-v2
+git clone https://github.com/ajaymahato431/Laravel-Esewa-Epay-V2
 cd laravel-esewa-epay-v2
 composer install
 composer test
