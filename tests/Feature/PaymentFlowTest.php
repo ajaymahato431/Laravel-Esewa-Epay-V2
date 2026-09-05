@@ -126,8 +126,8 @@ it('queues a delayed reconciliation job when asked to', function () {
 it('resolves the facade to a real class with real methods', function () {
     // The previous implementation proxied through an anonymous class, so
     // nothing could autocomplete or type-check it.
-    expect(Esewa::getFacadeRoot())->toBeInstanceOf(\AjayMahato\Esewa\Esewa::class)
-        ->and(method_exists(\AjayMahato\Esewa\Esewa::class, 'handleCallback'))->toBeTrue()
+    expect(Esewa::getFacadeRoot())->toBeInstanceOf(AjayMahato\Esewa\Esewa::class)
+        ->and(method_exists(AjayMahato\Esewa\Esewa::class, 'handleCallback'))->toBeTrue()
         ->and(Esewa::mode())->toBe('uat')
         ->and(Esewa::productCode())->toBe('EPAYTEST');
 });

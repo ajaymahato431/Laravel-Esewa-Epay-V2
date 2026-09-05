@@ -1,0 +1,123 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a new Laravel release that breaks the package is noticed here
+    # rather than by somebody's checkout.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Testbench pins laravel/framework, which in turn replaces the
+        # illuminate/* components this package requires - so pinning testbench
+        # is what actually selects the Laravel version. Pest has to move with
+        # it because each testbench major supports a different PHPUnit.
+        include:
+          - { laravel: '10', php: '8.1', testbench: '8.*',  pest: '^2.36' }
+          - { laravel: '10', php: '8.2', testbench: '8.*',  pest: '^2.36' }
+          - { laravel: '10', php: '8.3', testbench: '8.*',  pest: '^2.36' }
+          - { laravel: '11', php: '8.2', testbench: '9.*',  pest: '^3.0' }
+          - { laravel: '11', php: '8.3', testbench: '9.*',  pest: '^3.0' }
+          - { laravel: '11', php: '8.4', testbench: '9.*',  pest: '^3.0' }
+          - { laravel: '12', php: '8.2', testbench: '10.*', pest: '^3.0' }
+          - { laravel: '12', php: '8.3', testbench: '10.*', pest: '^3.0' }
+          - { laravel: '12', php: '8.4', testbench: '10.*', pest: '^3.0' }
+          - { laravel: '13', php: '8.3', testbench: '11.*', pest: '^5.0' }
+          - { laravel: '13', php: '8.4', testbench: '11.*', pest: '^5.0' }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_sqlite, bcmath
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require --dev --no-update --no-interaction \
+            "orchestra/testbench:${{ matrix.testbench }}" \
+            "pestphp/pest:${{ matrix.pest }}"
+          composer update --prefer-dist --prefer-stable --no-interaction
+
+      - name: Show what resolved
+        run: composer show --locked laravel/framework orchestra/testbench pestphp/pest | grep -E '^(name|versions)'
+
+      - name: Run tests
+        run: vendor/bin/pest --colors=always
+
+  lowest:
+    name: Lowest supported dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_sqlite, bcmath
+          coverage: none
+
+      # Proves the declared lower bounds are real rather than aspirational.
+      - run: |
+          composer require --dev --no-update --no-interaction \
+            "orchestra/testbench:8.*" "pestphp/pest:^2.36"
+          composer update --prefer-dist --prefer-lowest --no-interaction
+      - run: vendor/bin/pest --colors=always
+
+  quality:
+    name: Code style and static analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - run: composer update --prefer-dist --no-interaction
+
+      - name: Check code style
+        run: vendor/bin/pint --test
+
+      - name: Static analysis
+        run: vendor/bin/phpstan analyse --no-progress
+
+  future:
+    # Early warning for the next Laravel major. Allowed to fail: a red run here
+    # is a to-do, not a broken release.
+    name: Next Laravel (allowed to fail)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_sqlite, bcmath
+          coverage: none
+
+      - name: Resolve against Laravel dev-master
+        run: |
+          composer config minimum-stability dev
+          composer config prefer-stable true
+          composer require --dev --no-update --no-interaction "orchestra/testbench:*"
+          composer update --prefer-dist --no-interaction --ignore-platform-reqs
+
+      - run: vendor/bin/pest --colors=always

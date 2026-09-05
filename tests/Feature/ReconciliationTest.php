@@ -2,6 +2,7 @@
 
 use AjayMahato\Esewa\Enums\PaymentStatus;
 use AjayMahato\Esewa\Events\EsewaPaymentVerified;
+use AjayMahato\Esewa\Exceptions\EsewaException;
 use AjayMahato\Esewa\Facades\Esewa;
 use AjayMahato\Esewa\Jobs\ReconcileEsewaPayment;
 use Illuminate\Support\Facades\Event;
@@ -20,7 +21,7 @@ it('settles a payment whose callback never arrived', function () {
 
     Http::fake(['*' => Http::response(['status' => 'COMPLETE', 'ref_id' => '0007G36'])]);
 
-    (new ReconcileEsewaPayment($payment->transaction_uuid))->handle();
+    dispatch_sync(new ReconcileEsewaPayment($payment->transaction_uuid));
 
     $payment->refresh();
 
@@ -36,7 +37,7 @@ it('does not re-check a payment that already settled', function () {
 
     Http::fake();
 
-    (new ReconcileEsewaPayment($payment->transaction_uuid))->handle();
+    dispatch_sync(new ReconcileEsewaPayment($payment->transaction_uuid));
 
     Http::assertNothingSent();
 });
@@ -44,7 +45,7 @@ it('does not re-check a payment that already settled', function () {
 it('survives an unknown transaction without throwing', function () {
     Http::fake();
 
-    (new ReconcileEsewaPayment('NEVER-EXISTED'))->handle();
+    dispatch_sync(new ReconcileEsewaPayment('NEVER-EXISTED'));
 
     Http::assertNothingSent();
 });
@@ -55,7 +56,7 @@ it('keeps polling an ambiguous payment', function () {
 
     Http::fake(['*' => Http::response(['status' => 'COMPLETE', 'ref_id' => 'LATE1'])]);
 
-    (new ReconcileEsewaPayment($payment->transaction_uuid))->handle();
+    dispatch_sync(new ReconcileEsewaPayment($payment->transaction_uuid));
 
     expect($payment->refresh()->status)->toBe(PaymentStatus::COMPLETE);
 });
@@ -94,7 +95,7 @@ it('leaves the payment untouched when the gateway is unreachable', function () {
     Http::fake(['*' => Http::response('gateway down', 503)]);
 
     expect(fn () => Esewa::reconcile($payment))
-        ->toThrow(\AjayMahato\Esewa\Exceptions\EsewaException::class);
+        ->toThrow(EsewaException::class);
 
     expect($payment->refresh()->status)->toBe(PaymentStatus::PENDING);
 });

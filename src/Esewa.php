@@ -28,7 +28,7 @@ class Esewa
      * return Esewa::pay(['amount' => $order->total, 'payable' => $order]);
      * ```
      *
-     * @param  array<string, mixed>  $params
+     * @param array<string, mixed> $params
      */
     public function pay(array $params): Response
     {
@@ -40,7 +40,7 @@ class Esewa
      *
      * For SPA and mobile clients that post to eSewa themselves.
      *
-     * @param  array<string, mixed>  $params
+     * @param array<string, mixed> $params
      * @return array{payment: EsewaPayment, endpoint: string, payload: array<string, string>}
      */
     public function prepare(array $params): array
@@ -117,7 +117,7 @@ class Esewa
     }
 
     /**
-     * @param  array<string, mixed>  $fields
+     * @param array<string, mixed> $fields
      */
     public function buildSignatureForFields(array $fields, string $signedFieldNamesCsv): string
     {
@@ -134,7 +134,7 @@ class Esewa
      * ]));
      * ```
      *
-     * @param  array<string, mixed>  $fields
+     * @param array<string, mixed> $fields
      */
     public function signedCallbackPayload(array $fields = []): string
     {

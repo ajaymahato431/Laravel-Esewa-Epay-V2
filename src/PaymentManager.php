@@ -12,6 +12,7 @@ use AjayMahato\Esewa\Jobs\ReconcileEsewaPayment;
 use AjayMahato\Esewa\Models\EsewaPayment;
 use AjayMahato\Esewa\Support\Amount;
 use AjayMahato\Esewa\Support\RedirectGuard;
+use Illuminate\Contracts\View\Factory as ViewFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -29,7 +30,7 @@ use Illuminate\Support\Str;
 class PaymentManager
 {
     /**
-     * @param  array<string, mixed>  $config
+     * @param array<string, mixed> $config
      */
     public function __construct(
         protected EsewaClient $client,
@@ -48,7 +49,7 @@ class PaymentManager
      * ]);
      * ```
      *
-     * @param  array<string, mixed>  $params
+     * @param array<string, mixed> $params
      *
      * @throws EsewaException
      */
@@ -78,7 +79,7 @@ class PaymentManager
         $this->scheduleReconciliation($payment);
 
         return new Response(
-            view('esewa::form', [
+            app(ViewFactory::class)->make('esewa::form', [
                 'endpoint' => $this->client->formEndpoint(),
                 'payload' => $payload,
             ])->render()
@@ -91,7 +92,7 @@ class PaymentManager
      * For applications that render their own form or drive eSewa from a SPA or
      * mobile client.
      *
-     * @param  array<string, mixed>  $params
+     * @param array<string, mixed> $params
      * @return array{payment: EsewaPayment, endpoint: string, payload: array<string, string>}
      *
      * @throws EsewaException
@@ -124,7 +125,7 @@ class PaymentManager
     }
 
     /**
-     * @param  array<string, mixed>  $params
+     * @param array<string, mixed> $params
      *
      * @throws EsewaException
      */
@@ -248,8 +249,8 @@ class PaymentManager
      * complete" and both fire EsewaPaymentVerified - which would fulfil the
      * order twice.
      *
-     * @param  array<string, mixed>  $state
-     * @param  array<string, mixed>  $rawResponse
+     * @param array<string, mixed> $state
+     * @param array<string, mixed> $rawResponse
      *
      * @throws EsewaException
      */
@@ -312,7 +313,7 @@ class PaymentManager
      * transaction and the right amount, which is what stops a valid callback for
      * a 10 rupee order being replayed against a 10,000 rupee one.
      *
-     * @param  array<string, mixed>  $state
+     * @param array<string, mixed> $state
      *
      * @throws EsewaException
      */

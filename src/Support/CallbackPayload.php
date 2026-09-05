@@ -28,7 +28,7 @@ final class CallbackPayload
     private const LITERAL_PATTERN = '-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null';
 
     /**
-     * @param  array<string, mixed>  $data
+     * @param array<string, mixed> $data
      */
     private function __construct(
         private readonly string $json,
@@ -197,8 +197,8 @@ final class CallbackPayload
      * Values are stringified by the caller; anything numeric should already have
      * been normalised through {@see Amount}.
      *
-     * @param  array<string, mixed>  $fields
-     * @param  array<int, string>  $names
+     * @param array<string, mixed> $fields
+     * @param array<int, string> $names
      *
      * @throws SignatureVerificationException
      */

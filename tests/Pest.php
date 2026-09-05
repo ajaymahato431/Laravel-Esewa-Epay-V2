@@ -1,7 +1,7 @@
 <?php
 
-use AjayMahato\Esewa\EsewaClient;
 use AjayMahato\Esewa\Enums\PaymentStatus;
+use AjayMahato\Esewa\EsewaClient;
 use AjayMahato\Esewa\Models\EsewaPayment;
 use AjayMahato\Esewa\Tests\TestCase;
 
@@ -10,7 +10,7 @@ uses(TestCase::class)->in('Unit', 'Feature');
 /**
  * A client wired to the documented UAT credentials.
  *
- * @param  array<string, mixed>  $overrides
+ * @param array<string, mixed> $overrides
  */
 function esewaClient(array $overrides = []): EsewaClient
 {
@@ -35,7 +35,7 @@ function esewaClient(array $overrides = []): EsewaClient
 /**
  * Build a signed callback payload the way eSewa would.
  *
- * @param  array<string, mixed>  $overrides
+ * @param array<string, mixed> $overrides
  */
 function esewaCallbackPayload(array $overrides = []): string
 {
@@ -45,7 +45,7 @@ function esewaCallbackPayload(array $overrides = []): string
 /**
  * Persist a payment ready to receive a callback.
  *
- * @param  array<string, mixed>  $attributes
+ * @param array<string, mixed> $attributes
  */
 function esewaPayment(array $attributes = []): EsewaPayment
 {

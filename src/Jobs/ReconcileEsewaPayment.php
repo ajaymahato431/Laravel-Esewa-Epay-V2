@@ -3,8 +3,8 @@
 namespace AjayMahato\Esewa\Jobs;
 
 use AjayMahato\Esewa\Exceptions\EsewaException;
-use AjayMahato\Esewa\Facades\Esewa;
 use AjayMahato\Esewa\Models\EsewaPayment;
+use AjayMahato\Esewa\PaymentManager;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -44,7 +44,7 @@ class ReconcileEsewaPayment implements ShouldBeUnique, ShouldQueue
         return 3600;
     }
 
-    public function handle(): void
+    public function handle(PaymentManager $payments): void
     {
         $payment = EsewaPayment::query()->forTransaction($this->transactionUuid)->first();
 
@@ -60,7 +60,7 @@ class ReconcileEsewaPayment implements ShouldBeUnique, ShouldQueue
         }
 
         try {
-            Esewa::reconcile($payment);
+            $payments->reconcile($payment);
         } catch (EsewaException $e) {
             Log::warning("[esewa] Reconciliation of {$this->transactionUuid} failed: {$e->getMessage()}");
 

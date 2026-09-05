@@ -1,307 +1,359 @@
 # Laravel eSewa ePay v2
 
-Laravel eSewa ePay v2 integration for Laravel 10/11/12. Generate HMAC signatures, post to the ePay form endpoint, verify callbacks, and record every attempt in your database with a single facade call.
+[![Tests](https://github.com/ajaymahato/laravel-esewa-epay-v2/actions/workflows/tests.yml/badge.svg)](https://github.com/ajaymahato/laravel-esewa-epay-v2/actions)
+[![Packagist](https://img.shields.io/packagist/v/ajaymahato/laravel-esewa-epay-v2.svg)](https://packagist.org/packages/ajaymahato/laravel-esewa-epay-v2)
+[![License](https://img.shields.io/packagist/l/ajaymahato/laravel-esewa-epay-v2.svg)](LICENSE)
 
-## Features
+Take payments with [eSewa ePay v2](https://developer.esewa.com.np/pages/Epay) in Laravel.
 
-- Drop-in facade: `return Esewa::pay([...]);` renders an auto-submit payment form
-- HMAC-SHA256 (Base64) signing helper for requests and webhook payloads
-- Callback verification + event dispatch (`EsewaPaymentVerified`) with DB persistence
-- Status check client for reconciliation workflows
-- Ships with migration, model, enum, controllers, routes, and Blade view
-
-## Requirements
-
-- PHP 8.1+
-- Laravel 10 or 11 (or any app with `illuminate/support` 10/11/12)
-- eSewa merchant credentials for UAT or Production
-
-## Payment Status Constants/Enums
+Two lines of your code, and the package handles signing, verification, storage
+and reconciliation:
 
 ```php
-    case PENDING        = 'PENDING';
-    case COMPLETE       = 'COMPLETE';
-    case FULL_REFUND    = 'FULL_REFUND';
-    case PARTIAL_REFUND = 'PARTIAL_REFUND';
-    case AMBIGUOUS      = 'AMBIGUOUS';
-    case NOT_FOUND      = 'NOT_FOUND';
-    case CANCELED       = 'CANCELED';
+// Send the customer to eSewa
+return Esewa::pay(['amount' => $order->total, 'payable' => $order]);
+
+// When they come back
+$payment = Esewa::handleCallback($request);
 ```
+
+**Works on Laravel 10, 11, 12 and 13, on PHP 8.1 through 8.4.**
+
+---
+
+## Why this package
+
+Getting eSewa right is mostly about the ways it can quietly go wrong:
+
+- **Signatures are taken over the gateway's own text.** eSewa sends
+  `"total_amount": 1000.0` as a JSON number; decoding it and casting back gives
+  `1000`, a different HMAC, and a rejected payment. This package signs the raw
+  literal, and its test suite is pinned to the signature eSewa publishes.
+- **Amounts carry paisa.** Money is stored as `decimal(12,2)`, so `1234.50` is
+  still `1234.50` after the round trip.
+- **Callbacks get lost.** Customers close tabs. A reconciliation job and an
+  `esewa:reconcile` command ask eSewa what actually happened.
+- **Payments must settle exactly once.** State changes are applied under a row
+  lock, so a browser callback racing a reconcile job cannot fulfil an order
+  twice.
+- **The callback URL is public.** Redirect targets are validated, so nobody can
+  use your payment flow to bounce customers to their own page.
+
+---
 
 ## Installation
 
-1. Require the package
-   ```bash
-   composer require ajaymahato/laravel-esewa-epay-v2
-   ```
-2. Publish config + migration, then run migrations
-   ```bash
-   php artisan vendor:publish --tag=esewa-config
-   php artisan migrate
-   ```
-3. Configure your `.env`
-
-   ```dotenv
-   ESEWA_MODE=uat                 # uat (testing) or production
-   ESEWA_PRODUCT_CODE=EPAYTEST     # merchant code
-   ESEWA_SECRET_KEY=8gBm/:&EnhH.1/q
-   ESEWA_SUCCESS_URL=https://your-app.com/esewa/relay
-   ESEWA_FAILURE_URL=https://your-app.com/esewa/relay
-
-   # Optional overrides
-   ESEWA_ROUTE_PREFIX=             # set if you want /prefix/esewa/...
-   ```
-
-## Add this to your order/booking table
-
-```php
-$table->foreignId('payment_id')->nullable()
-->constrained('esewa_payments')->nullOnDelete();
-$table->string('transaction_uuid')->unique();
-$table->string('payment_status')->default('UNPAID'); // cache
-$table->string('esewa_ref')->nullable(); // external proof
-$table->timestamp('paid_at')->nullable();
+```bash
+composer require ajaymahato/laravel-esewa-epay-v2
+php artisan vendor:publish --tag=esewa-config
+php artisan migrate
 ```
 
-## Quick Start
+Add your credentials to `.env`:
 
-Create your order/booking as usual. In your controller, generate the UUID, queue the delayed reconciliation job, then return the payment form using the same UUID.
+```dotenv
+ESEWA_MODE=uat
+ESEWA_PRODUCT_CODE=EPAYTEST
+ESEWA_SECRET_KEY="8gBm/:&EnhH.1/q"
+```
+
+Those are eSewa's public sandbox values. Replace all three with your merchant
+credentials before going live — the package refuses to sign production traffic
+with the sandbox key.
+
+> **Sandbox logins:** eSewa ID `9806800001` (through `...05`), password
+> `Nepal@123`, MPIN `1122`, token `123456`.
+
+---
+
+## Taking a payment
+
+Call `Esewa::pay()` from your own controller, behind your own auth. It records
+the attempt and returns a page that posts straight to eSewa.
 
 ```php
-use Illuminate\Support\Str;
-use App\Jobs\ReconcileEsewaPaymentJob;
+use AjayMahato\Esewa\Facades\Esewa;
 
-public function payOrder(\App\Models\Order $order)
+class CheckoutController extends Controller
 {
-    // Generate a UUID you control (so jobs/admin tools can reference it)
-    $uuid = now()->format('ymd-His').'-'.Str::upper(Str::random(4));
+    public function pay(Order $order)
+    {
+        $this->authorize('pay', $order);
 
-    // Schedule a safety-net reconcile in case the browser callback never arrives
-    ReconcileEsewaPaymentJob::dispatch($uuid)->delay(now()->addMinutes(8));
-
-    // Return the auto-submitting eSewa form
-    return \Esewa::pay([
-        'transaction_uuid'        => $uuid,                 // use the same UUID
-        'amount'                  => (int) $order->total,
-        'total_amount'            => (int) $order->total,
-        'tax_amount'              => 0,
-        'product_service_charge'  => 0,
-        'product_delivery_charge' => 0,
-        'meta' => [
-            'payable' => ['type' => $order::class, 'id' => $order->id],
-        ],
-        'success_url' => route('thank.you'),        //it should be different from .env urls
-        'failure_url' => route('payment.failed'),   //put the success or failed page routes here
-    ]);
+        return Esewa::pay([
+            'amount'  => $order->total,   // 1250, 1250.50 or "1,250.50"
+            'payable' => $order,          // links the payment to this order
+        ]);
+    }
 }
 ```
 
-## Handling Verified Payments
+That is the whole integration. The package generates the transaction id, signs
+the request, stores the row and brings the customer back verified.
 
-Hook one listener to flip your own record (booking/order/cart) to PAID.
+<details>
+<summary>All accepted options</summary>
 
-1. Make the listener
+| Key | Default | Notes |
+|---|---|---|
+| `amount` | — | Required. Int, float or string. |
+| `tax_amount` | `0` | |
+| `product_service_charge` | `0` | |
+| `product_delivery_charge` | `0` | |
+| `total_amount` | sum of the above | Rejected if it does not equal the parts. |
+| `transaction_uuid` | generated | Letters, digits and hyphens only. |
+| `payable` | `null` | Any Eloquent model. |
+| `success_url` | config | Where to land after a verified payment. |
+| `failure_url` | config | Where to land otherwise. |
+| `meta` | `[]` | Anything else you want stored. |
+
+</details>
+
+### Rendering the form yourself
+
+For a SPA or mobile client, `prepare()` returns the signed fields without a page:
 
 ```php
-php artisan make:listener MarkOrderPaid
+['payment' => $payment, 'endpoint' => $url, 'payload' => $fields] = Esewa::prepare([
+    'amount' => $order->total,
+]);
 ```
 
-app/Listeners/MarkOrderPaid.php
+---
+
+## Reacting to payment
+
+Listen for the event. It fires **once** per payment, whether the news arrived by
+browser callback or by reconciliation.
 
 ```php
-public function handle(\AjayMahato\Esewa\Events\EsewaPaymentVerified $event): void
+// app/Listeners/FulfilOrder.php
+use AjayMahato\Esewa\Events\EsewaPaymentVerified;
+
+class FulfilOrder
 {
-    $payment = $event->payment;
-    if (($payment->status?->value ?? $payment->status) !== 'COMPLETE') {
-        return;
-    }
+    public function handle(EsewaPaymentVerified $event): void
+    {
+        $order = $event->payment->payable;   // the model you passed to pay()
 
-    $meta = $payment->meta['payable'] ?? null;
-    if (! $meta) {
-        return;
+        $order?->update([
+            'status'     => 'paid',
+            'esewa_ref'  => $event->payment->ref_id,
+            'paid_at'    => now(),
+        ]);
     }
-
-    $model = app($meta['type'])::find($meta['id']);
-    if (! $model) {
-        return;
-    }
-
-    $model->update([
-        'payment_id' =? $payment->id,
-        'payment_status' => 'PAID',
-        'esewa_ref' => $payment->ref_id,
-        'paid_at' => now(),
-    ]);
 }
 ```
 
-Tip: add a tiny helper on your models:
+Laravel 11+ discovers listeners automatically. On Laravel 10, register it in
+`EventServiceProvider`.
+
+| Event | When |
+|---|---|
+| `EsewaPaymentInitiated` | A payment row was created; nothing is paid yet. |
+| `EsewaPaymentVerified` | Confirmed `COMPLETE`. **Fulfil orders here.** |
+| `EsewaPaymentFailed` | Cancelled, or the session expired. Release stock here. |
+| `EsewaPaymentStatusUpdated` | Any transition, including refunds. |
+
+---
+
+## Where customers come back to
+
+By default eSewa returns to a package route that verifies the payload and then
+forwards the customer to your page. Set where that is:
+
+```dotenv
+ESEWA_SUCCESS_URL=/orders/thank-you
+ESEWA_FAILURE_URL=/orders/failed
+```
+
+Or per payment, via `success_url` / `failure_url`.
+
+Only relative paths and your own host are accepted. To allow another domain, add
+it to `esewa.redirect.allowed_hosts`.
+
+### Handling the callback in your own route
+
+If you would rather own the URL, point eSewa at your route and call the package:
 
 ```php
-public function isPaid(): bool
+Route::get('/payment/esewa/return', function (Request $request) {
+    $payment = Esewa::handleCallback($request);   // verifies, stores, fires events
+
+    return $payment->status->isComplete()
+        ? redirect()->route('orders.show', $payment->payable)
+        : redirect()->route('checkout')->withErrors($payment->status->label());
+});
+```
+
+Set `ESEWA_ROUTES_ENABLED=false` to unregister the package routes entirely.
+
+---
+
+## Reconciliation
+
+A customer who closes the tab never triggers the callback. eSewa's status
+endpoint is the authority, so ask it.
+
+**Scheduled sweep** — recommended for everyone:
+
+```php
+// routes/console.php (Laravel 11+) or app/Console/Kernel.php
+Schedule::command('esewa:reconcile')->everyTenMinutes();
+```
+
+It only looks at payments that are still unresolved and at least 15 minutes old,
+so it never disturbs a customer who is still paying.
+
+**Per-payment job** — set `ESEWA_AUTO_RECONCILE=true` to queue a delayed check
+for every payment. This needs a real queue worker: the `sync` driver ignores
+delays and would run the check inline, mid-checkout.
+
+**On demand**, for support staff:
+
+```php
+$payment = Esewa::reconcileTransaction('250610-162413');
+```
+
+```bash
+php artisan esewa:reconcile 250610-162413
+```
+
+---
+
+## Querying payments
+
+Add the trait to whatever you charge for:
+
+```php
+use AjayMahato\Esewa\Concerns\HasEsewaPayments;
+
+class Order extends Model
 {
-return $this->payment_status === 'PAID';
+    use HasEsewaPayments;
 }
 ```
 
-## Reconciliation Safety Nets (Optional to make the project more Secure)
+```php
+$order->hasCompletedEsewaPayment();   // bool
+$order->latestEsewaPayment;           // most recent attempt
+$order->esewaPayments;                // every attempt
+```
 
-Delayed jobs, scheduled sweeps, and manual tools ensure you update stale payments even if callbacks fail. Choose any one option among the three according to your convenience.
-
-### A) Delayed job fallback
-
-1. Create the job
-   ```bash
-   php artisan make:job ReconcileEsewaPaymentJob
-   ```
-2. Implement the job (`app/Jobs/ReconcileEsewaPaymentJob.php`):
-
-   ```php
-   <?php
-
-   namespace App\Jobs;
-
-   use AjayMahato\Esewa\Models\EsewaPayment;
-   use AjayMahato\Esewa\Events\EsewaPaymentVerified;
-   use Illuminate\Bus\Queueable;
-   use Illuminate\Contracts\Queue\ShouldQueue;
-
-   class ReconcileEsewaPaymentJob implements ShouldQueue
-   {
-       use Queueable;
-
-       public function __construct(public string $uuid) {}
-
-       public function handle(): void
-       {
-           $payment = EsewaPayment::where('transaction_uuid', $this->uuid)->first();
-
-           if (! $payment || ($payment->status?->value ?? $payment->status) === 'COMPLETE') {
-               return; // nothing to do
-           }
-
-           $resp = \Esewa::statusCheck(
-               $payment->product_code,
-               (string) $payment->total_amount,
-               $payment->transaction_uuid
-           );
-
-           $payment->update([
-               'raw_response' => $resp,
-               'ref_id'       => $resp['ref_id'] ?? $payment->ref_id,
-               'status'       => $resp['status'] ?? $payment->status,
-           ]);
-
-           if (($resp['status'] ?? null) === 'COMPLETE') {
-               event(new EsewaPaymentVerified($payment->fresh()));
-           }
-       }
-   }
-   ```
-
-3. Dispatch it when you start the payment (already shown above). The job should run ~8�10 minutes later and only act if the row is still `PENDING`.
-
-### B) Scheduled sweep (belt-and-suspenders)
-
-1. Generate the command
-   ```bash
-   php artisan make:command EsewaReconcileCommand
-   ```
-2. Implement the command (`app/Console/Commands/EsewaReconcileCommand.php`):
-
-   ```php
-   <?php
-
-   namespace App\Console\Commands;
-
-   use Illuminate\Console\Command;
-   use AjayMahato\Esewa\Models\EsewaPayment;
-   use AjayMahato\Esewa\Events\EsewaPaymentVerified;
-
-   class EsewaReconcileCommand extends Command
-   {
-       protected $signature = 'esewa:reconcile {uuid?}';
-       protected $description = 'Reconcile pending eSewa payments (or a single UUID)';
-
-       public function handle(): int
-       {
-           $query = EsewaPayment::query()->where('status', 'PENDING');
-
-           if ($uuid = $this->argument('uuid')) {
-               $query->where('transaction_uuid', $uuid);
-           }
-
-           $query->chunkById(100, function ($payments) {
-               foreach ($payments as $payment) {
-                   $resp = \Esewa::statusCheck(
-                       $payment->product_code,
-                       (string) $payment->total_amount,
-                       $payment->transaction_uuid
-                   );
-
-                   $payment->update([
-                       'raw_response' => $resp,
-                       'ref_id'       => $resp['ref_id'] ?? $payment->ref_id,
-                       'status'       => $resp['status'] ?? $payment->status,
-                   ]);
-
-                   if (($resp['status'] ?? null) === 'COMPLETE') {
-                       event(new EsewaPaymentVerified($payment->fresh()));
-                   }
-               }
-           });
-
-           $this->info('Reconciliation run complete.');
-           return self::SUCCESS;
-       }
-   }
-   ```
-
-3. Schedule it (e.g. hourly) in `app/Console/Kernel.php`:
-   ```php
-   protected function schedule(\Illuminate\Console\Scheduling\Schedule $schedule): void
-   {
-       $schedule->command('esewa:reconcile')->hourly(); // or everyTenMinutes()
-   }
-   ```
-
-### C) Manual admin action
-
-Provide customer support with a button to reconcile a single payment on demand.
+On the payment itself:
 
 ```php
-public function reconcile(string $uuid)
-{
-    $payment = \AjayMahato\Esewa\Models\EsewaPayment::where('transaction_uuid', $uuid)->firstOrFail();
+$payment->status->isComplete();   // fulfil
+$payment->status->isPending();    // PENDING or AMBIGUOUS - check again later
+$payment->status->isFailed();     // CANCELED or NOT_FOUND
+$payment->status->isRefunded();
+$payment->status->isTerminal();   // no further change expected
+$payment->status->label();        // customer-facing message
+```
 
-    $resp = \Esewa::statusCheck(
-        $payment->product_code,
-        (string) $payment->total_amount,
-        $payment->transaction_uuid
-    );
+Statuses are the seven eSewa documents: `PENDING`, `COMPLETE`, `FULL_REFUND`,
+`PARTIAL_REFUND`, `AMBIGUOUS`, `NOT_FOUND`, `CANCELED`. Anything unrecognised
+resolves to `PENDING` — never to paid.
 
-    $payment->update([
-        'raw_response' => $resp,
-        'ref_id'       => $resp['ref_id'] ?? $payment->ref_id,
-        'status'       => $resp['status'] ?? $payment->status,
+> `AMBIGUOUS` means eSewa has the payment on hold. It is deliberately not
+> terminal, so reconciliation keeps checking it. Do not fulfil on it.
+
+---
+
+## Testing your integration
+
+Generate a correctly signed callback instead of hand-building an HMAC:
+
+```php
+it('marks the order paid', function () {
+    $order = Order::factory()->create();
+
+    $this->actingAs($order->user)->post("/checkout/{$order->id}/pay");
+
+    $payment = $order->latestEsewaPayment;
+
+    $this->post('/esewa/callback', [
+        'data' => Esewa::signedCallbackPayload([
+            'transaction_uuid' => $payment->transaction_uuid,
+            'total_amount'     => $payment->total_amount,
+            'status'           => 'COMPLETE',
+        ]),
     ]);
 
-    if (($resp['status'] ?? null) === 'COMPLETE') {
-        event(new \AjayMahato\Esewa\Events\EsewaPaymentVerified($payment->fresh()));
-    }
-
-    return back()->with('status', 'Reconciled.');
-}
+    expect($order->refresh()->status)->toBe('paid');
+});
 ```
 
-**Recommended setup:** dispatch the delayed job for every payment, keep the scheduled sweep as a backstop, and expose the manual action for support/admin tooling.
+Fake the status endpoint with Laravel's HTTP client:
 
-## Security Notes
+```php
+Http::fake(['*' => Http::response(['status' => 'COMPLETE', 'ref_id' => '0007G36'])]);
+```
 
-- Request signature order: `total_amount,transaction_uuid,product_code`
-- Validate every callback with `signed_field_names` + signature comparison (handled for you)
-- Never commit your secret key; keep it in `.env`
+---
+
+## Configuration
+
+Every option lives in `config/esewa.php` with an explanatory comment. The env
+vars:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ESEWA_MODE` | `uat` | `uat` or `production`. |
+| `ESEWA_PRODUCT_CODE` | `EPAYTEST` | Merchant code. |
+| `ESEWA_SECRET_KEY` | *none* | Required. Signing key. |
+| `ESEWA_SUCCESS_URL` | *none* | Default success redirect. |
+| `ESEWA_FAILURE_URL` | *none* | Default failure redirect. |
+| `ESEWA_ALLOWED_REDIRECT_HOSTS` | *none* | Comma-separated extra hosts. |
+| `ESEWA_ROUTES_ENABLED` | `true` | Register package routes. |
+| `ESEWA_ROUTE_PREFIX` | `esewa` | URL prefix. |
+| `ESEWA_DB_CONNECTION` | default | Connection for the payments table. |
+| `ESEWA_DB_TABLE` | `esewa_payments` | Table name. |
+| `ESEWA_AUTO_RECONCILE` | `false` | Queue a check per payment. |
+| `ESEWA_RECONCILE_DELAY` | `10` | Minutes before that check. |
+| `ESEWA_HTTP_TIMEOUT` | `30` | Status-check timeout. |
+
+### Going live
+
+1. `ESEWA_MODE=production`
+2. Replace `ESEWA_PRODUCT_CODE` and `ESEWA_SECRET_KEY` with your merchant values.
+3. Make sure `APP_URL` is your real domain — redirect safety depends on it.
+4. Run a queue worker and schedule `esewa:reconcile`.
+
+---
+
+## Design notes
+
+**There is no route that starts a payment.** Deciding what a customer owes is
+your application's job, behind your authorisation. A public endpoint that
+accepted an amount would let anyone create payments for any figure.
+
+**eSewa is always sent the package relay, not your success page.** The relay
+verifies the signed payload and only then forwards the customer, so nobody
+reaches a "thank you" page for a payment that did not complete — including by
+typing the URL.
+
+**Payments must be started with `Esewa::pay()`.** A callback is only checked
+against an expected amount because that amount was recorded first.
+
+---
+
+## Requirements
+
+| Laravel | PHP |
+|---|---|
+| 10.x | 8.1 – 8.4 |
+| 11.x | 8.2 – 8.4 |
+| 12.x | 8.2 – 8.4 |
+| 13.x | 8.3 – 8.4 |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
+Upgrading from 1.x: [UPGRADE.md](UPGRADE.md).
 
 ## License
 
-Released under the MIT License.
+[MIT](LICENSE).

@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Log;
 final class RedirectGuard
 {
     /**
-     * @param  array<int, string>  $allowedHosts  extra hosts to permit, beyond the application's own
+     * @param array<int, string> $allowedHosts extra hosts to permit, beyond the application's own
      */
     public function __construct(
         private readonly array $allowedHosts = [],

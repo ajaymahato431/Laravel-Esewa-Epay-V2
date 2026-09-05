@@ -6,6 +6,7 @@ use AjayMahato\Esewa\Enums\PaymentStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Support\Carbon;
 
 /**
  * One attempt to collect money through eSewa.
@@ -24,13 +25,13 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * @property string $total_amount
  * @property PaymentStatus $status
  * @property string|null $ref_id
- * @property \Illuminate\Support\Carbon|null $verified_at
+ * @property Carbon|null $verified_at
  * @property string|null $payable_type
  * @property string|null $payable_id
  * @property array<string, mixed>|null $raw_response
  * @property array<string, mixed>|null $meta
- * @property \Illuminate\Support\Carbon $created_at
- * @property \Illuminate\Support\Carbon $updated_at
+ * @property Carbon $created_at
+ * @property Carbon $updated_at
  * @property-read Model|null $payable
  */
 class EsewaPayment extends Model
@@ -144,7 +145,7 @@ class EsewaPayment extends Model
     // -------------------------------------------------------------- scopes
 
     /**
-     * @param  Builder<self>  $query
+     * @param Builder<self> $query
      * @return Builder<self>
      */
     public function scopeStatus(Builder $query, PaymentStatus|string $status): Builder
@@ -155,7 +156,7 @@ class EsewaPayment extends Model
     /**
      * Payments that may still change and are therefore worth reconciling.
      *
-     * @param  Builder<self>  $query
+     * @param Builder<self> $query
      * @return Builder<self>
      */
     public function scopeUnresolved(Builder $query): Builder
@@ -167,7 +168,7 @@ class EsewaPayment extends Model
     }
 
     /**
-     * @param  Builder<self>  $query
+     * @param Builder<self> $query
      * @return Builder<self>
      */
     public function scopeForTransaction(Builder $query, string $transactionUuid): Builder

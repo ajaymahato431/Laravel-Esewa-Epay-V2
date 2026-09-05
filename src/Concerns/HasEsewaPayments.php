@@ -4,6 +4,7 @@ namespace AjayMahato\Esewa\Concerns;
 
 use AjayMahato\Esewa\Enums\PaymentStatus;
 use AjayMahato\Esewa\Models\EsewaPayment;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 
@@ -11,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\MorphOne;
  * Add to any model that gets paid for - an Order, Booking, Invoice or
  * Subscription.
  *
- * @mixin \Illuminate\Database\Eloquent\Model
+ * @mixin Model
  */
 trait HasEsewaPayments
 {

@@ -31,7 +31,7 @@ class EsewaConfigurationException extends EsewaException
     }
 
     /**
-     * @param  array<int, string>  $supported
+     * @param array<int, string> $supported
      */
     public static function unknownMode(string $mode, array $supported): self
     {

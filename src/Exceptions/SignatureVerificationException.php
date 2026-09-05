@@ -31,7 +31,7 @@ class SignatureVerificationException extends EsewaException
     }
 
     /**
-     * @param  array<int, string>  $missing
+     * @param array<int, string> $missing
      */
     public static function insufficientSignedFields(array $missing): self
     {

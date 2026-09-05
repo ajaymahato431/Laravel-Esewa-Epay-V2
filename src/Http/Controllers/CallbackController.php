@@ -6,6 +6,8 @@ use AjayMahato\Esewa\Exceptions\EsewaException;
 use AjayMahato\Esewa\Models\EsewaPayment;
 use AjayMahato\Esewa\PaymentManager;
 use AjayMahato\Esewa\Support\RedirectGuard;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
@@ -21,7 +23,7 @@ class CallbackController extends Controller
 {
     public function __construct(protected PaymentManager $payments) {}
 
-    public function __invoke(Request $request): Response|\Illuminate\Http\RedirectResponse|\Illuminate\Http\JsonResponse
+    public function __invoke(Request $request): Response|RedirectResponse|JsonResponse
     {
         try {
             $payment = $this->resolvePayment($request);
@@ -85,7 +87,7 @@ class CallbackController extends Controller
         return $payment;
     }
 
-    protected function failure(Request $request, string $message): Response|\Illuminate\Http\RedirectResponse|\Illuminate\Http\JsonResponse
+    protected function failure(Request $request, string $message): Response|RedirectResponse|JsonResponse
     {
         if ($this->wantsJson($request)) {
             return response()->json(['ok' => false, 'message' => $message], 422);
@@ -99,14 +101,14 @@ class CallbackController extends Controller
     }
 
     /**
-     * @param  array<string, mixed>  $meta
+     * @param array<string, mixed> $meta
      */
     protected function render(
         Request $request,
         array $meta,
         ?EsewaPayment $payment,
         int $status
-    ): Response|\Illuminate\Http\RedirectResponse {
+    ): Response|RedirectResponse {
         $redirect = $this->redirectTarget($request, $payment, (bool) ($meta['ok'] ?? false));
 
         if ($redirect !== null) {

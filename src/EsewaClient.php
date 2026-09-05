@@ -48,7 +48,7 @@ class EsewaClient
     ];
 
     /**
-     * @param  array<string, mixed>  $config
+     * @param array<string, mixed> $config
      */
     public function __construct(protected array $config) {}
 
@@ -155,7 +155,7 @@ class EsewaClient
     /**
      * Sign an arbitrary set of fields in the order named.
      *
-     * @param  array<string, mixed>  $fields
+     * @param array<string, mixed> $fields
      */
     public function buildSignatureForFields(array $fields, string $signedFieldNamesCsv): string
     {
@@ -174,7 +174,7 @@ class EsewaClient
     /**
      * Build the field set posted to the eSewa payment form.
      *
-     * @param  array<string, mixed>  $params
+     * @param array<string, mixed> $params
      * @return array<string, string>
      *
      * @throws EsewaException
@@ -201,7 +201,7 @@ class EsewaClient
 
         if (! Amount::equals($total, $expectedTotal)) {
             throw new EsewaException(
-                "eSewa requires total_amount to equal amount + tax_amount + product_service_charge + product_delivery_charge. "
+                'eSewa requires total_amount to equal amount + tax_amount + product_service_charge + product_delivery_charge. '
                 ."Got total_amount={$total} but the parts sum to {$expectedTotal}."
             );
         }
@@ -298,7 +298,7 @@ class EsewaClient
      * Intended for integration tests, so applications can exercise their own
      * listeners without hand-building an HMAC.
      *
-     * @param  array<string, mixed>  $fields
+     * @param array<string, mixed> $fields
      */
     public function signedCallbackPayload(array $fields = []): string
     {

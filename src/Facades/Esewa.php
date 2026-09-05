@@ -26,7 +26,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \AjayMahato\Esewa\EsewaClient client()
  * @method static \AjayMahato\Esewa\PaymentManager payments()
  *
- * @see \AjayMahato\Esewa\Esewa
+ * @see EsewaService
  */
 class Esewa extends Facade
 {

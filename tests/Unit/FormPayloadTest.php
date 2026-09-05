@@ -3,6 +3,7 @@
 use AjayMahato\Esewa\EsewaClient;
 use AjayMahato\Esewa\Exceptions\EsewaConfigurationException;
 use AjayMahato\Esewa\Exceptions\EsewaException;
+use AjayMahato\Esewa\PaymentManager;
 
 function payloadParams(array $overrides = []): array
 {
@@ -66,7 +67,7 @@ it('rejects transaction ids eSewa cannot accept', function (string $uuid) {
 ])->throws(EsewaException::class);
 
 it('accepts the transaction id format the package generates', function () {
-    $uuid = app(\AjayMahato\Esewa\PaymentManager::class)->generateTransactionUuid();
+    $uuid = app(PaymentManager::class)->generateTransactionUuid();
 
     expect(esewaClient()->buildFormPayload(payloadParams(['transaction_uuid' => $uuid])))
         ->toHaveKey('signature');
