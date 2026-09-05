@@ -57,26 +57,9 @@ class EsewaPayment extends Model
      * Amounts cast to `decimal:2` come back as strings. That is deliberate:
      * comparing money as floats is how paisa goes missing.
      *
-     * @return array<string, string>
-     */
-    protected function casts(): array
-    {
-        return [
-            'amount' => 'decimal:2',
-            'tax_amount' => 'decimal:2',
-            'service_charge' => 'decimal:2',
-            'delivery_charge' => 'decimal:2',
-            'total_amount' => 'decimal:2',
-            'status' => PaymentStatus::class,
-            'verified_at' => 'datetime',
-            'raw_response' => 'array',
-            'meta' => 'array',
-        ];
-    }
-
-    /**
-     * Laravel 10 reads the `$casts` property; 11+ prefer the `casts()` method.
-     * Declaring both keeps one model working across every supported version.
+     * Declared as a property rather than the newer `casts()` method because the
+     * property is honoured by every supported Laravel version, and one
+     * declaration cannot drift out of step with another.
      *
      * @var array<string, string>
      */
