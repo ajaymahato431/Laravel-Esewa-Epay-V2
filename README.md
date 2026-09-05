@@ -1,6 +1,6 @@
 # Laravel eSewa ePay v2
 
-[![Tests](https://github.com/ajaymahato/laravel-esewa-epay-v2/actions/workflows/tests.yml/badge.svg)](https://github.com/ajaymahato/laravel-esewa-epay-v2/actions)
+[![Tests](https://github.com/ajaymahato431/Laravel-Esewa-Epay-V2/actions/workflows/tests.yml/badge.svg)](https://github.com/ajaymahato431/Laravel-Esewa-Epay-V2/actions)
 [![Packagist](https://img.shields.io/packagist/v/ajaymahato/laravel-esewa-epay-v2.svg)](https://packagist.org/packages/ajaymahato/laravel-esewa-epay-v2)
 [![License](https://img.shields.io/packagist/l/ajaymahato/laravel-esewa-epay-v2.svg)](LICENSE)
 
