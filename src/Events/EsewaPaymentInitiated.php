@@ -7,13 +7,12 @@ use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * eSewa confirmed the payment as COMPLETE.
+ * A payment row was created and the customer is being sent to eSewa.
  *
- * This is the event to fulfil orders on. It fires at most once per payment even
- * when the browser callback and a reconciliation job race each other, because
- * the transition is applied under a row lock.
+ * Nothing has been paid yet. Useful for audit logging or marking your own
+ * record as "awaiting payment".
  */
-class EsewaPaymentVerified
+class EsewaPaymentInitiated
 {
     use Dispatchable, SerializesModels;
 

@@ -7,13 +7,12 @@ use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * eSewa confirmed the payment as COMPLETE.
+ * The payment reached a state it will not recover from.
  *
- * This is the event to fulfil orders on. It fires at most once per payment even
- * when the browser callback and a reconciliation job race each other, because
- * the transition is applied under a row lock.
+ * Either the customer cancelled, or eSewa has no record of the transaction and
+ * the session has expired. Release reserved stock here.
  */
-class EsewaPaymentVerified
+class EsewaPaymentFailed
 {
     use Dispatchable, SerializesModels;
 
