@@ -139,6 +139,11 @@ class PaymentManager
             ? Amount::normalize($params['total_amount'])
             : Amount::sum($amount, $tax, $service, $delivery);
 
+        // Before anything is written: a row whose amounts eSewa would refuse is
+        // a pending payment that can never resolve, and reconciliation would
+        // ask about a transaction the gateway has never heard of.
+        $this->client->assertChargeableAmounts($amount, $tax, $service, $delivery, $total);
+
         $uuid = isset($params['transaction_uuid'])
             ? (string) $params['transaction_uuid']
             : $this->generateTransactionUuid();

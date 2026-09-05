@@ -60,8 +60,12 @@ final class CallbackPayload
             throw SignatureVerificationException::invalidJson($e->getMessage());
         }
 
-        if (! is_array($data)) {
-            throw SignatureVerificationException::invalidJson('expected a JSON object');
+        // json_decode(..., true) hands back a plain list for `[1,2,3]` just as
+        // it does for an object, so the shape has to be checked as well as the
+        // type. An empty object is caught here too - it carries no signature
+        // and could never be verified.
+        if (! is_array($data) || array_is_list($data)) {
+            throw SignatureVerificationException::invalidJson('expected a JSON object of fields');
         }
 
         /** @var array<string, mixed> $data */

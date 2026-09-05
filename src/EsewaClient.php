@@ -197,18 +197,7 @@ class EsewaClient
         $delivery = Amount::normalize($params['product_delivery_charge'] ?? 0);
         $total = Amount::normalize($params['total_amount'] ?? Amount::sum($amount, $tax, $service, $delivery));
 
-        $expectedTotal = Amount::sum($amount, $tax, $service, $delivery);
-
-        if (! Amount::equals($total, $expectedTotal)) {
-            throw new EsewaException(
-                'eSewa requires total_amount to equal amount + tax_amount + product_service_charge + product_delivery_charge. '
-                ."Got total_amount={$total} but the parts sum to {$expectedTotal}."
-            );
-        }
-
-        if (! Amount::isPositive($total)) {
-            throw new EsewaException("eSewa will not accept a total_amount of {$total}. The amount must be greater than zero.");
-        }
+        $this->assertChargeableAmounts($amount, $tax, $service, $delivery, $total);
 
         $payload = [
             'amount' => $amount,
@@ -226,6 +215,33 @@ class EsewaClient
         $payload['signature'] = $this->buildRequestSignature($total, $uuid);
 
         return $payload;
+    }
+
+    /**
+     * The amount rules eSewa enforces, kept callable on their own so a caller
+     * can find out that a payment is impossible before it writes a row for it.
+     *
+     * @throws EsewaException
+     */
+    public function assertChargeableAmounts(
+        string $amount,
+        string $tax,
+        string $service,
+        string $delivery,
+        string $total,
+    ): void {
+        $expectedTotal = Amount::sum($amount, $tax, $service, $delivery);
+
+        if (! Amount::equals($total, $expectedTotal)) {
+            throw new EsewaException(
+                'eSewa requires total_amount to equal amount + tax_amount + product_service_charge + product_delivery_charge. '
+                ."Got total_amount={$total} but the parts sum to {$expectedTotal}."
+            );
+        }
+
+        if (! Amount::isPositive($total)) {
+            throw new EsewaException("eSewa will not accept a total_amount of {$total}. The amount must be greater than zero.");
+        }
     }
 
     /**

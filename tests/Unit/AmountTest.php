@@ -61,3 +61,33 @@ it('returns null instead of throwing when asked to try', function () {
     expect(Amount::tryNormalize('nope'))->toBeNull()
         ->and(Amount::tryNormalize('12.5'))->toBe('12.50');
 });
+
+it('keeps large amounts exact instead of letting a float eat the paisa', function () {
+    // A float carries about 15 significant digits, so routing the string
+    // through one turns ...456.78 into ...456.75. The digits are rounded here
+    // directly so the amount that reaches eSewa is the amount that was asked
+    // for, however large.
+    expect(Amount::normalize('1234567890123456.78'))->toBe('1234567890123456.78')
+        ->and(number_format((float) '1234567890123456.78', 2, '.', ''))->toBe('1234567890123456.75');
+});
+
+it('rounds paisa half up, away from zero', function (string $input, string $expected) {
+    expect(Amount::normalize($input))->toBe($expected);
+})->with([
+    'exact half rounds up' => ['1.005', '1.01'],
+    'below half rounds down' => ['1.004', '1.00'],
+    'above half rounds up' => ['1.006', '1.01'],
+    'carries through nines' => ['9.999', '10.00'],
+    'negative half rounds away from zero' => ['-1.005', '-1.01'],
+    'never yields negative zero' => ['-0.001', '0.00'],
+    'leading decimal point' => ['.5', '0.50'],
+    'exponent notation' => ['1.5e3', '1500.00'],
+    'negative exponent' => ['15e-2', '0.15'],
+    'strips leading zeros' => ['0001000.5', '1000.50'],
+]);
+
+it('sums amounts without float drift', function () {
+    expect(Amount::sum('0.1', '0.2'))->toBe('0.30')
+        ->and(Amount::sum('1234567890123.45', '0.55'))->toBe('1234567890124.00')
+        ->and(Amount::sum('100', '-100'))->toBe('0.00');
+});

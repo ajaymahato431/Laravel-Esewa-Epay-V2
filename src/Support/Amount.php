@@ -37,7 +37,7 @@ final class Amount
         }
 
         if (is_int($value)) {
-            return number_format($value, self::SCALE, '.', '');
+            return self::quantize((string) $value);
         }
 
         if (is_float($value)) {
@@ -59,7 +59,7 @@ final class Amount
             throw new EsewaException("Amount \"{$value}\" is not numeric.");
         }
 
-        return number_format((float) $cleaned, self::SCALE, '.', '');
+        return self::quantize($cleaned);
     }
 
     /**
@@ -98,10 +98,10 @@ final class Amount
         $paisa = 0;
 
         foreach ($amounts as $amount) {
-            $paisa += (int) round(((float) self::normalize($amount)) * 100);
+            $paisa += self::toPaisa(self::normalize($amount));
         }
 
-        return number_format($paisa / 100, self::SCALE, '.', '');
+        return self::fromPaisa($paisa);
     }
 
     /**
@@ -111,6 +111,112 @@ final class Amount
     {
         $normalized = self::tryNormalize($value);
 
-        return $normalized !== null && (float) $normalized > 0;
+        return $normalized !== null
+            && ! str_starts_with($normalized, '-')
+            && $normalized !== self::fromPaisa(0);
+    }
+
+    /**
+     * Round a numeric string to paisa by working on its digits.
+     *
+     * A PHP float carries about 15 significant digits, so casting a string to
+     * one first turns "1234567890123456.78" into "...456.75". Rounding the
+     * digits directly keeps every amount exact no matter how large, and rounds
+     * halves away from zero the way money is quoted.
+     */
+    private static function quantize(string $number): string
+    {
+        [$sign, $integer, $fraction] = self::split($number);
+
+        $paisa = str_pad(substr($fraction, 0, self::SCALE), self::SCALE, '0');
+
+        if (($fraction[self::SCALE] ?? '0') >= '5') {
+            $carried = self::increment($integer.$paisa);
+            $integer = substr($carried, 0, -self::SCALE);
+            $paisa = substr($carried, -self::SCALE);
+        }
+
+        $integer = ltrim($integer, '0');
+
+        if ($integer === '') {
+            $integer = '0';
+        }
+
+        // "-0.00" is not an amount anybody means to send.
+        if ($sign === '-' && $integer === '0' && $paisa === str_repeat('0', self::SCALE)) {
+            $sign = '';
+        }
+
+        return $sign.$integer.'.'.$paisa;
+    }
+
+    /**
+     * Break a numeric string into sign, integer digits and fraction digits,
+     * flattening exponent notation (which is_numeric() also accepts) by moving
+     * the decimal point rather than by evaluating it.
+     *
+     * @return array{0: string, 1: string, 2: string}
+     */
+    private static function split(string $number): array
+    {
+        preg_match('/^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/', $number, $matches);
+
+        $sign = ($matches[1] ?? '') === '-' ? '-' : '';
+        $integer = $matches[2] ?? '';
+        $fraction = $matches[3] ?? '';
+        $exponent = (int) ($matches[4] ?? '0');
+
+        if ($exponent > 0) {
+            $fraction = str_pad($fraction, $exponent, '0');
+            $integer .= substr($fraction, 0, $exponent);
+            $fraction = substr($fraction, $exponent);
+        } elseif ($exponent < 0) {
+            $integer = str_pad($integer, -$exponent, '0', STR_PAD_LEFT);
+            $fraction = substr($integer, $exponent).$fraction;
+            $integer = substr($integer, 0, $exponent);
+        }
+
+        return [$sign, $integer, $fraction];
+    }
+
+    /**
+     * Add one to a string of digits, growing it when every digit is a nine.
+     */
+    private static function increment(string $digits): string
+    {
+        for ($i = strlen($digits) - 1; $i >= 0; $i--) {
+            if ($digits[$i] !== '9') {
+                $digits[$i] = (string) ((int) $digits[$i] + 1);
+
+                return $digits;
+            }
+
+            $digits[$i] = '0';
+        }
+
+        return '1'.$digits;
+    }
+
+    /**
+     * Read a normalised amount as whole paisa.
+     */
+    private static function toPaisa(string $normalized): int
+    {
+        $paisa = (int) str_replace(['-', '.'], '', $normalized);
+
+        return str_starts_with($normalized, '-') ? -$paisa : $paisa;
+    }
+
+    /**
+     * Render whole paisa back as a normalised amount.
+     */
+    private static function fromPaisa(int $paisa): string
+    {
+        $digits = str_pad((string) abs($paisa), self::SCALE + 1, '0', STR_PAD_LEFT);
+
+        return ($paisa < 0 ? '-' : '')
+            .substr($digits, 0, -self::SCALE)
+            .'.'
+            .substr($digits, -self::SCALE);
     }
 }

@@ -179,3 +179,14 @@ it('verifies the payloads it generates for tests', function () {
             'status' => 'COMPLETE',
         ]);
 });
+
+it('rejects JSON that is not an object of fields', function (string $json) {
+    CallbackPayload::fromJson($json);
+})->with([
+    'a list' => '[1,2,3]',
+    'a list of objects' => '[{"signature":"x"}]',
+    'an empty list' => '[]',
+    'a bare string' => '"signature"',
+    'a bare number' => '1000',
+    'null' => 'null',
+])->throws(SignatureVerificationException::class, 'not valid JSON');

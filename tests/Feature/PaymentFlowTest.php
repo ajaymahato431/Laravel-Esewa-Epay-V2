@@ -138,3 +138,21 @@ it('finds a payment by transaction id', function () {
     expect(Esewa::find('ORDER-FIND')?->is($payment))->toBeTrue()
         ->and(Esewa::find('NOPE'))->toBeNull();
 });
+
+it('persists nothing when the amounts could never be charged', function (array $params) {
+    // The amount checks used to run while building the form, which is after the
+    // row was written - leaving a pending payment behind that eSewa was never
+    // asked about and that reconciliation could never resolve.
+    expect(fn () => Esewa::pay($params))->toThrow(EsewaException::class)
+        ->and(EsewaPayment::query()->count())->toBe(0);
+})->with([
+    'no amount at all' => [['transaction_uuid' => 'ORDER-NIL']],
+    'zero amount' => [['amount' => 0, 'transaction_uuid' => 'ORDER-ZERO']],
+    'negative amount' => [['amount' => -100, 'transaction_uuid' => 'ORDER-NEG']],
+    'total that does not match the parts' => [[
+        'amount' => 1000,
+        'tax_amount' => 130,
+        'total_amount' => 1000,
+        'transaction_uuid' => 'ORDER-MISMATCH',
+    ]],
+]);
