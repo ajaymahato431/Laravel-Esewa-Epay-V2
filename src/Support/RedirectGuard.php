@@ -54,20 +54,26 @@ final class RedirectGuard
         $host = parse_url($target, PHP_URL_HOST);
 
         if (! is_string($host) || $host === '') {
-            return $this->reject($target, 'it is neither a relative path nor an absolute http(s) URL');
+            $this->reject($target, 'it is neither a relative path nor an absolute http(s) URL');
+
+            return null;
         }
 
         $scheme = strtolower((string) parse_url($target, PHP_URL_SCHEME));
 
         if (! in_array($scheme, ['http', 'https'], true)) {
-            return $this->reject($target, "the scheme \"{$scheme}\" is not http or https");
+            $this->reject($target, "the scheme \"{$scheme}\" is not http or https");
+
+            return null;
         }
 
         if ($this->isAllowedHost($host)) {
             return $target;
         }
 
-        return $this->reject($target, "the host \"{$host}\" is not this application and is not listed in esewa.redirect.allowed_hosts");
+        $this->reject($target, "the host \"{$host}\" is not this application and is not listed in esewa.redirect.allowed_hosts");
+
+        return null;
     }
 
     /**
@@ -131,10 +137,13 @@ final class RedirectGuard
         return false;
     }
 
-    private function reject(string $target, string $reason): null
+    /**
+     * Record why a redirect target was refused. Callers return null themselves,
+     * because a standalone null return type needs PHP 8.2 and this package
+     * still supports 8.1.
+     */
+    private function reject(string $target, string $reason): void
     {
         Log::warning("[esewa] Refused to redirect to \"{$target}\" because {$reason}.");
-
-        return null;
     }
 }
