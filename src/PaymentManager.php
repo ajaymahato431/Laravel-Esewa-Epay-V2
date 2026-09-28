@@ -12,7 +12,6 @@ use AjayMahato\Esewa\Jobs\ReconcileEsewaPayment;
 use AjayMahato\Esewa\Models\EsewaPayment;
 use AjayMahato\Esewa\Support\Amount;
 use AjayMahato\Esewa\Support\RedirectGuard;
-use Illuminate\Contracts\View\Factory as ViewFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -78,12 +77,10 @@ class PaymentManager
 
         $this->scheduleReconciliation($payment);
 
-        return new Response(
-            app(ViewFactory::class)->make('esewa::form', [
-                'endpoint' => $this->client->formEndpoint(),
-                'payload' => $payload,
-            ])->render()
-        );
+        return response()->view('esewa::form', [
+            'endpoint' => $this->client->formEndpoint(),
+            'payload' => $payload,
+        ]);
     }
 
     /**
